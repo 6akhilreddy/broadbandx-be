@@ -7,13 +7,28 @@ const Subscription = require("./Subscription");
 const Invoice = require("./Invoice");
 const Payment = require("./Payment");
 const Feature = require("./Feature");
-const UserPermission = require("./UserPermission");
+const Role = require("./Role");
+const RolePermission = require("./RolePermission");
+const Area = require("./Area");
 const sequelize = require("../config/db");
 
 const defineAssociations = require("./associations");
 
 // Initialize associations
-defineAssociations();
+defineAssociations({
+  Company,
+  User,
+  Plan,
+  Customer,
+  CustomerHardware,
+  Subscription,
+  Invoice,
+  Payment,
+  Feature,
+  Role,
+  RolePermission,
+  Area,
+});
 
 module.exports = {
   sequelize,
@@ -26,5 +41,7 @@ module.exports = {
   Invoice,
   Payment,
   Feature,
-  UserPermission,
+  Role,
+  RolePermission,
+  Area,
 };

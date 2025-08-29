@@ -1,19 +1,25 @@
 const express = require("express");
 const router = express.Router();
 const companyController = require("../controllers/companyController");
-const {
-  authenticate,
-  hasPermission,
-  isSuperAdmin,
-} = require("../middlewares/authMiddleware");
+const { superAdminOnly, requirePermission } = require("../middlewares");
 
 /**
  * @swagger
  * /companies:
  *   post:
  *     summary: Create a new company
- *     description: Create a new company record.
+ *     description: |
+ *       Create a new company with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can create companies
+ *       - **ADMIN/AGENT**: Cannot create companies
+ *
+ *       **Required Features:**
+ *       - `company.manage` feature permission required
  *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -37,35 +43,60 @@ const {
  *       400:
  *         description: Bad request
  */
-/**
- * @swagger
- * security:
- *   - bearerAuth: []
- */
-router.post("/", authenticate, isSuperAdmin, companyController.createCompany);
+router.post(
+  "/",
+  ...requirePermission("company.manage"),
+  ...superAdminOnly,
+  companyController.createCompany
+);
 
 /**
  * @swagger
  * /companies:
  *   get:
  *     summary: Get all companies
- *     description: Retrieve all companies.
+ *     description: |
+ *       Retrieve all companies with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view all companies
+ *       - **ADMIN/AGENT**: Cannot view companies
+ *
+ *       **Required Features:**
+ *       - `company.manage` feature permission required
  *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: List of companies
  *       500:
  *         description: Server error
  */
-router.get("/", authenticate, isSuperAdmin, companyController.getAllCompanies);
+router.get(
+  "/",
+  ...requirePermission("company.manage"),
+  ...superAdminOnly,
+  companyController.getAllCompanies
+);
 
 /**
  * @swagger
  * /companies/{id}:
  *   get:
  *     summary: Get company by ID
- *     description: Retrieve a company by its ID.
+ *     description: |
+ *       Retrieve a company by its ID with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view any company
+ *       - **ADMIN/AGENT**: Cannot view companies
+ *
+ *       **Required Features:**
+ *       - `company.manage` feature permission required
  *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -81,8 +112,8 @@ router.get("/", authenticate, isSuperAdmin, companyController.getAllCompanies);
  */
 router.get(
   "/:id",
-  authenticate,
-  isSuperAdmin,
+  ...requirePermission("company.manage"),
+  ...superAdminOnly,
   companyController.getCompanyById
 );
 
@@ -91,8 +122,18 @@ router.get(
  * /companies/{id}:
  *   put:
  *     summary: Update company
- *     description: Update a company's details.
+ *     description: |
+ *       Update a company's details with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can update any company
+ *       - **ADMIN/AGENT**: Cannot update companies
+ *
+ *       **Required Features:**
+ *       - `company.manage` feature permission required
  *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -124,15 +165,30 @@ router.get(
  *       404:
  *         description: Company not found
  */
-router.put("/:id", authenticate, isSuperAdmin, companyController.updateCompany);
+router.put(
+  "/:id",
+  ...requirePermission("company.manage"),
+  ...superAdminOnly,
+  companyController.updateCompany
+);
 
 /**
  * @swagger
  * /companies/{id}:
  *   delete:
  *     summary: Delete company
- *     description: Delete a company by its ID.
+ *     description: |
+ *       Delete a company by its ID with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can delete any company
+ *       - **ADMIN/AGENT**: Cannot delete companies
+ *
+ *       **Required Features:**
+ *       - `company.manage` feature permission required
  *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -148,8 +204,8 @@ router.put("/:id", authenticate, isSuperAdmin, companyController.updateCompany);
  */
 router.delete(
   "/:id",
-  authenticate,
-  isSuperAdmin,
+  ...requirePermission("company.manage"),
+  ...superAdminOnly,
   companyController.deleteCompany
 );
 

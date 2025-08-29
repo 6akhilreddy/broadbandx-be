@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
-const { User, UserPermission, Feature } = require("../models");
+const { User, Role, RolePermission, Feature } = require("../models");
 require("dotenv").config();
 
 module.exports.login = async (req, res) => {
@@ -19,8 +19,13 @@ module.exports.login = async (req, res) => {
       attributes: { include: ["passwordHash"] },
       include: [
         {
-          model: UserPermission,
-          include: [{ model: Feature }],
+          model: Role,
+          include: [
+            {
+              model: RolePermission,
+              include: [{ model: Feature }],
+            },
+          ],
         },
       ],
     });
@@ -36,16 +41,17 @@ module.exports.login = async (req, res) => {
     }
 
     // Get all allowed feature codes for user
-    const featureCodes = user.UserPermissions.filter(
-      (up) => up.allowed && up.Feature
-    ).map((up) => up.Feature.code);
+    const featureCodes = user.Role.RolePermissions.filter(
+      (rp) => rp.allowed && rp.Feature
+    ).map((rp) => rp.Feature.code);
 
     // Generate JWT token
     const token = jwt.sign(
       {
         id: user.id,
         companyId: user.companyId,
-        role: user.role,
+        roleId: user.roleId,
+        roleCode: user.Role.code,
         phone: user.phone,
       },
       process.env.JWT_SECRET,
@@ -62,7 +68,8 @@ module.exports.login = async (req, res) => {
         email: user.email,
         phone: user.phone,
         isActive: user.isActive,
-        role: user.role,
+        role: user.Role.name,
+        roleCode: user.Role.code,
         allowedFeatures: featureCodes,
       },
     };

@@ -11,6 +11,12 @@ const Area = require("../models/Area");
 exports.createCustomer = async (req, res) => {
   try {
     const { customer, hardware, subscription } = req.body;
+
+    // Add companyId for non-super admin users
+    if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
+      customer.companyId = req.userCompanyId;
+    }
+
     // Create Customer
     const newCustomer = await Customer.create(customer);
     // Create CustomerHardware
@@ -21,11 +27,16 @@ exports.createCustomer = async (req, res) => {
     // Create Subscription
     if (subscription) {
       subscription.customerId = newCustomer.id;
+      // Add companyId for non-super admin users
+      if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
+        subscription.companyId = req.userCompanyId;
+      }
       await Subscription.create(subscription);
     }
     res.status(201).json(newCustomer);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    console.error("Customer creation error:", err);
+    res.status(400).json({ error: err.message, details: err.errors });
   }
 };
 
@@ -47,6 +58,12 @@ exports.getAllCustomers = async (req, res) => {
 
     // Base where condition for customer search
     let whereCondition = {};
+
+    // Add company filter for non-super admin users
+    if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
+      whereCondition.companyId = req.userCompanyId;
+    }
+
     if (search) {
       whereCondition[Op.or] = [
         { fullName: { [Op.iLike]: `%${search}%` } },
@@ -71,6 +88,9 @@ exports.getAllCustomers = async (req, res) => {
         invoiceWhere.dueDate[Op.lte] = dueDateTo;
       }
     }
+
+    // Payment status filter - we'll handle this after getting the data
+    // since it requires calculating balance which is done in the transformation
 
     // Fetch customers with all related data
     const { rows: customers, count: total } = await Customer.findAndCountAll({
@@ -102,7 +122,7 @@ exports.getAllCustomers = async (req, res) => {
           include: [
             {
               model: Plan,
-              attributes: ["name"],
+              attributes: ["name", "monthlyPrice"],
               required: false,
             },
           ],
@@ -124,14 +144,15 @@ exports.getAllCustomers = async (req, res) => {
         },
       ],
       order: [["createdAt", "DESC"]],
-      limit: parseInt(limit),
-      offset: offset,
+      // Don't apply limit/offset if we're filtering by payment status
+      // because we need to filter after calculating balance
+      ...(paymentStatus ? {} : { limit: parseInt(limit), offset: offset }),
     });
 
     // Transform the data
     let transformedCustomers = customers.map((customer) => {
-      const hardware = customer.CustomerHardware?.[0] || {};
-      const subscription = customer.Subscription?.[0] || {};
+      const hardware = customer.CustomerHardwares?.[0] || {};
+      const subscription = customer.Subscriptions?.[0] || {};
       const latestInvoice = customer.Invoices?.[0];
       const invoicePayment = latestInvoice?.Payments?.[0];
 
@@ -145,6 +166,7 @@ exports.getAllCustomers = async (req, res) => {
       }
 
       return {
+        id: customer.id,
         fullName: customer.fullName,
         phone: customer.phone,
         address: customer.address,
@@ -155,14 +177,18 @@ exports.getAllCustomers = async (req, res) => {
         macAddress: hardware.macAddress,
         planName: subscription.Plan?.name,
         agreedMonthlyPrice: subscription.agreedMonthlyPrice,
+        monthlyPrice: subscription.Plan?.monthlyPrice,
         dueDate: latestInvoice?.dueDate,
         balance: balance,
       };
     });
 
     // Filter by payment status if specified
+    let finalCustomers = transformedCustomers;
+    let actualTotal = total;
+
     if (paymentStatus) {
-      transformedCustomers = transformedCustomers.filter((customer) => {
+      finalCustomers = transformedCustomers.filter((customer) => {
         if (paymentStatus === "paid") {
           return customer.balance === 0;
         } else if (paymentStatus === "unpaid") {
@@ -170,16 +196,27 @@ exports.getAllCustomers = async (req, res) => {
         }
         return true;
       });
+      actualTotal = finalCustomers.length;
+
+      // Apply pagination after filtering
+      const startIndex = (parseInt(page) - 1) * parseInt(limit);
+      const endIndex = startIndex + parseInt(limit);
+      finalCustomers = finalCustomers.slice(startIndex, endIndex);
     }
 
     // Return paginated response
+    const currentPage = parseInt(page);
+    const totalPages = Math.ceil(actualTotal / limit);
+
     res.json({
-      data: transformedCustomers,
+      data: finalCustomers,
       pagination: {
-        total,
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        limit: parseInt(limit),
+        totalItems: actualTotal,
+        currentPage,
+        totalPages,
+        pageSize: parseInt(limit),
+        hasNext: currentPage < totalPages,
+        hasPrevious: currentPage > 1,
       },
     });
   } catch (err) {
@@ -190,8 +227,14 @@ exports.getAllCustomers = async (req, res) => {
 // Get Customer by ID
 exports.getCustomerById = async (req, res) => {
   try {
+    // Add company filter for non-super admin users
+    let whereCondition = { id: req.params.id };
+    if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
+      whereCondition.companyId = req.userCompanyId;
+    }
+
     const customer = await Customer.findOne({
-      where: { id: req.params.id },
+      where: whereCondition,
       include: [
         {
           model: Area,
@@ -341,6 +384,52 @@ exports.deleteCustomer = async (req, res) => {
     const deleted = await Customer.destroy({ where: { id: req.params.id } });
     if (!deleted) return res.status(404).json({ error: "Customer not found" });
     res.json({ message: "Customer deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Test endpoint to check data structure
+exports.testCustomerData = async (req, res) => {
+  try {
+    const customer = await Customer.findOne({
+      where: { id: 1 }, // Test with first customer
+      include: [
+        {
+          model: CustomerHardware,
+          attributes: ["ipAddress", "macAddress"],
+          required: false,
+        },
+        {
+          model: Area,
+          attributes: ["areaName"],
+          required: false,
+        },
+        {
+          model: Subscription,
+          attributes: ["agreedMonthlyPrice"],
+          required: false,
+          include: [
+            {
+              model: Plan,
+              attributes: ["name", "monthlyPrice"],
+              required: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    if (!customer) {
+      return res.status(404).json({ error: "No customer found" });
+    }
+
+    res.json({
+      rawCustomer: customer.toJSON(),
+      hardware: customer.CustomerHardware,
+      subscription: customer.Subscription,
+      area: customer.Area,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

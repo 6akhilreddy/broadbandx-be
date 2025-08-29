@@ -8,11 +8,25 @@ const Subscription = require("../models/Subscription");
 const Invoice = require("../models/Invoice");
 const Payment = require("../models/Payment");
 const Feature = require("../models/Feature");
-const UserPermission = require("../models/UserPermission");
+const Role = require("../models/Role");
+const RolePermission = require("../models/RolePermission");
 const Area = require("../models/Area");
 
 // This function defines all the relationships between the models in the application.
-const defineAssociations = () => {
+const defineAssociations = (models = null) => {
+  // Use passed models or require them
+  const Company = models?.Company || require("../models/Company");
+  const User = models?.User || require("../models/User");
+  const Plan = models?.Plan || require("../models/Plan");
+  const Customer = models?.Customer || require("../models/Customer");
+  const CustomerHardware = models?.CustomerHardware || require("../models/CustomerHardware");
+  const Subscription = models?.Subscription || require("../models/Subscription");
+  const Invoice = models?.Invoice || require("../models/Invoice");
+  const Payment = models?.Payment || require("../models/Payment");
+  const Feature = models?.Feature || require("../models/Feature");
+  const Role = models?.Role || require("../models/Role");
+  const RolePermission = models?.RolePermission || require("../models/RolePermission");
+  const Area = models?.Area || require("../models/Area");
   // 🔹 Area Associations 🔹
   // Area belongs to Company and User (createdBy)
   Company.hasMany(Area, { foreignKey: "companyId", onDelete: "CASCADE" });
@@ -94,17 +108,21 @@ const defineAssociations = () => {
     foreignKey: "manualOverrideBy",
   });
 
-  // User permissions through the join table.
-  User.hasMany(UserPermission, { foreignKey: "userId", onDelete: "CASCADE" });
-  UserPermission.belongsTo(User, { foreignKey: "userId" });
+  // User belongs to Role
+  User.belongsTo(Role, { foreignKey: "roleId" });
+  Role.hasMany(User, { foreignKey: "roleId" });
 
-  // 🔹 Feature and UserPermission Associations 🔹
-  // Establishes the many-to-many relationship between Users and Features.
-  Feature.hasMany(UserPermission, {
+  // 🔹 Feature and RolePermission Associations 🔹
+  // Establishes the many-to-many relationship between Roles and Features.
+  Feature.hasMany(RolePermission, {
     foreignKey: "featureId",
     onDelete: "CASCADE",
   });
-  UserPermission.belongsTo(Feature, { foreignKey: "featureId" });
+  RolePermission.belongsTo(Feature, { foreignKey: "featureId" });
+
+  // Role has many RolePermissions
+  Role.hasMany(RolePermission, { foreignKey: "roleId", onDelete: "CASCADE" });
+  RolePermission.belongsTo(Role, { foreignKey: "roleId" });
 
   // 🔹 Plan and Subscription Associations 🔹
   Plan.hasMany(Subscription, { foreignKey: "planId", onDelete: "RESTRICT" });

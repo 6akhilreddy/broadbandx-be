@@ -1,12 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const agentController = require("../controllers/agentController");
+const {
+  companyFilter,
+  companyAccess,
+  requirePermission,
+  requirePermissionWithCompany,
+} = require("../middlewares");
 
 /**
  * @swagger
  * tags:
  *   name: Agents
- *   description: Agent management (company-scoped via authenticated user)
+ *   description: Agent management with role-based access control and company-scoped data
  */
 
 /**
@@ -14,6 +20,15 @@ const agentController = require("../controllers/agentController");
  * /agents:
  *   post:
  *     summary: Create a new agent (scoped to the authenticated user's company)
+ *     description: |
+ *       Create a new agent with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can create agents for any company (must specify companyId)
+ *       - **ADMIN**: Can only create agents for their own company (companyId automatically assigned)
+ *
+ *       **Required Features:**
+ *       - `agent.manage` feature permission required
  *     tags: [Agents]
  *     security:
  *       - bearerAuth: []
@@ -82,67 +97,161 @@ const agentController = require("../controllers/agentController");
  *       401:
  *         description: Unauthorized
  */
-router.post("/", agentController.createAgent);
+router.post(
+  "/",
+  ...requirePermissionWithCompany("agent.manage"),
+  agentController.createAgent
+);
 
 /**
  * @swagger
  * /agents:
  *   get:
- *     summary: Get all agents for the authenticated user's company
+ *     summary: Get all agents for a specific company with collection data
+ *     description: |
+ *       Get agents with role-based access control and company-based filtering.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view all agents across all companies
+ *       - **ADMIN**: Can only view agents from their own company
+ *
+ *       **Required Features:**
+ *       - `agents.view` feature permission required
+ *
+ *       **Note:** companyId parameter is automatically handled based on user's company
  *     tags: [Agents]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company to get agents for
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of items per page
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search term for agent name, email, or phone
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [ACTIVE, INACTIVE]
+ *         description: Filter by agent status
  *     responses:
  *       200:
- *         description: List of agents
+ *         description: List of agents with collection data and pagination
  *         content:
  *           application/json:
  *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   id:
- *                     type: integer
- *                   name:
- *                     type: string
- *                   email:
- *                     type: string
- *                   phone:
- *                     type: string
- *                   isActive:
- *                     type: boolean
- *                   role:
- *                     type: string
- *                   companyId:
- *                     type: integer
+ *               type: object
+ *               properties:
+ *                 agents:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       name:
+ *                         type: string
+ *                       email:
+ *                         type: string
+ *                       phone:
+ *                         type: string
+ *                       status:
+ *                         type: string
+ *                         enum: [ACTIVE, INACTIVE]
+ *                       role:
+ *                         type: string
+ *                       companyId:
+ *                         type: integer
+ *                       collection:
+ *                         type: object
+ *                         properties:
+ *                           total:
+ *                             type: number
+ *                             description: Total amount collected by the agent
+ *                           lastMonth:
+ *                             type: number
+ *                             description: Amount collected last month
+ *                           today:
+ *                             type: number
+ *                             description: Amount collected today
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     currentPage:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
+ *                     totalItems:
+ *                       type: integer
+ *                     hasNext:
+ *                       type: boolean
+ *                     hasPrevious:
+ *                       type: boolean
  *             example:
- *               - id: 1
- *                 name: "John Smith"
- *                 email: "john.smith@example.com"
- *                 phone: "9876543210"
- *                 isActive: true
- *                 role: "AGENT"
- *                 companyId: 42
- *               - id: 2
- *                 name: "Jane Doe"
- *                 email: "jane.doe@example.com"
- *                 phone: "9876543211"
- *                 isActive: true
- *                 role: "AGENT"
- *                 companyId: 42
+ *               agents:
+ *                 - id: 1
+ *                   name: "John Smith"
+ *                   email: "john.smith@example.com"
+ *                   phone: "9876543210"
+ *                   status: "ACTIVE"
+ *                   role: "AGENT"
+ *                   companyId: 42
+ *                   collection:
+ *                     total: 50000
+ *                     lastMonth: 15000
+ *                     today: 2500
+ *                 - id: 2
+ *                   name: "Jane Doe"
+ *                   email: "jane.doe@example.com"
+ *                   phone: "9876543211"
+ *                   status: "ACTIVE"
+ *                   role: "AGENT"
+ *                   companyId: 42
+ *                   collection:
+ *                     total: 35000
+ *                     lastMonth: 12000
+ *                     today: 1800
+ *               pagination:
+ *                 currentPage: 1
+ *                 totalPages: 1
+ *                 totalItems: 2
+ *                 hasNext: false
+ *                 hasPrevious: false
  *       401:
  *         description: Unauthorized
  *       400:
- *         description: User is not associated with a company
+ *         description: Company ID is required as a query parameter
  */
-router.get("/", agentController.getAllAgents);
+router.get(
+  "/",
+  ...requirePermission("agents.view"),
+  ...companyFilter,
+  agentController.getAllAgents
+);
 
 /**
  * @swagger
  * /agents/{id}:
  *   get:
- *     summary: Get agent by ID (must belong to the authenticated user's company)
+ *     summary: Get agent by ID (must belong to the specified company)
  *     tags: [Agents]
  *     security:
  *       - bearerAuth: []
@@ -153,6 +262,12 @@ router.get("/", agentController.getAllAgents);
  *           type: integer
  *         required: true
  *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
  *     responses:
  *       200:
  *         description: Agent data
@@ -188,7 +303,7 @@ router.get("/", agentController.getAllAgents);
  *       401:
  *         description: Unauthorized
  *       400:
- *         description: User is not associated with a company
+ *         description: Company ID is required as a query parameter
  */
 router.get("/:id", agentController.getAgentById);
 
@@ -196,7 +311,7 @@ router.get("/:id", agentController.getAgentById);
  * @swagger
  * /agents/{id}:
  *   put:
- *     summary: Update agent by ID (must belong to the authenticated user's company)
+ *     summary: Update agent by ID (must belong to the specified company)
  *     tags: [Agents]
  *     security:
  *       - bearerAuth: []
@@ -207,6 +322,12 @@ router.get("/:id", agentController.getAgentById);
  *           type: integer
  *         required: true
  *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
  *     requestBody:
  *       required: true
  *       content:
@@ -262,7 +383,7 @@ router.get("/:id", agentController.getAgentById);
  *       401:
  *         description: Unauthorized
  *       400:
- *         description: Validation error or user not associated with a company
+ *         description: Validation error or company ID is required as a query parameter
  */
 router.put("/:id", agentController.updateAgent);
 
@@ -270,7 +391,7 @@ router.put("/:id", agentController.updateAgent);
  * @swagger
  * /agents/{id}:
  *   delete:
- *     summary: Delete agent by ID (must belong to the authenticated user's company)
+ *     summary: Delete agent by ID (must belong to the specified company)
  *     tags: [Agents]
  *     security:
  *       - bearerAuth: []
@@ -281,6 +402,12 @@ router.put("/:id", agentController.updateAgent);
  *           type: integer
  *         required: true
  *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
  *     responses:
  *       200:
  *         description: Agent deleted
@@ -289,7 +416,7 @@ router.put("/:id", agentController.updateAgent);
  *       401:
  *         description: Unauthorized
  *       400:
- *         description: User is not associated with a company
+ *         description: Company ID is required as a query parameter
  */
 router.delete("/:id", agentController.deleteAgent);
 

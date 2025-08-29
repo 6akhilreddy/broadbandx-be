@@ -2,17 +2,28 @@ const express = require("express");
 const router = express.Router();
 const adminController = require("../controllers/adminController");
 const {
-  authenticate,
-  hasPermission,
-} = require("../middlewares/authMiddleware");
+  superAdminOnly,
+  superAdminWithCompany,
+  requirePermission,
+} = require("../middlewares");
 
 /**
  * @swagger
  * /admins:
  *   post:
  *     summary: Create Admin for a specific company
- *     description: Create a new admin user for a company.
+ *     description: |
+ *       Create a new admin user with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can create admins for any company
+ *       - **ADMIN**: Cannot create other admins
+ *
+ *       **Required Features:**
+ *       - `agent.manage` feature permission required
  *     tags: [Admins]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -42,20 +53,30 @@ const {
  *       400:
  *         description: Bad request
  */
-/**
- * @swagger
- * security:
- *   - bearerAuth: []
- */
-router.post("/", authenticate, adminController.createAdmin);
+router.post(
+  "/",
+  ...requirePermission("agent.manage"),
+  ...superAdminWithCompany,
+  adminController.createAdmin
+);
 
 /**
  * @swagger
  * /admins/company/{companyId}:
  *   get:
  *     summary: Get all Admins for a company
- *     description: Retrieve all admin users for a specific company.
+ *     description: |
+ *       Retrieve all admin users with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view admins from any company
+ *       - **ADMIN**: Can only view admins from their own company
+ *
+ *       **Required Features:**
+ *       - `agents.view` feature permission required
  *     tags: [Admins]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: companyId
@@ -71,7 +92,8 @@ router.post("/", authenticate, adminController.createAdmin);
  */
 router.get(
   "/company/:companyId",
-  authenticate,
+  ...requirePermission("agents.view"),
+  ...superAdminWithCompany,
   adminController.getAdminsByCompany
 );
 
@@ -80,8 +102,18 @@ router.get(
  * /admins/{id}:
  *   get:
  *     summary: Get Admin by ID
- *     description: Retrieve an admin user by their ID.
+ *     description: |
+ *       Retrieve an admin user by their ID with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view any admin across all companies
+ *       - **ADMIN**: Can only view admins from their own company
+ *
+ *       **Required Features:**
+ *       - `agents.view` feature permission required
  *     tags: [Admins]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -95,15 +127,30 @@ router.get(
  *       404:
  *         description: Admin not found
  */
-router.get("/:id", authenticate, adminController.getAdminById);
+router.get(
+  "/:id",
+  ...requirePermission("agents.view"),
+  ...superAdminWithCompany,
+  adminController.getAdminById
+);
 
 /**
  * @swagger
  * /admins/{id}:
  *   put:
  *     summary: Update Admin
- *     description: Update an admin user's details.
+ *     description: |
+ *       Update an admin user's details with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can update any admin across all companies
+ *       - **ADMIN**: Can only update admins from their own company
+ *
+ *       **Required Features:**
+ *       - `agent.manage` feature permission required
  *     tags: [Admins]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -141,6 +188,11 @@ router.get("/:id", authenticate, adminController.getAdminById);
  *       404:
  *         description: Admin not found
  */
-router.put("/:id", authenticate, adminController.updateAdmin);
+router.put(
+  "/:id",
+  ...requirePermission("agent.manage"),
+  ...superAdminWithCompany,
+  adminController.updateAdmin
+);
 
 module.exports = router;

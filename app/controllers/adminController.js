@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Company = require("../models/Company");
+const { Role } = require("../models");
 
 // Create Admin for a specific company
 exports.createAdmin = async (req, res) => {
@@ -8,6 +9,12 @@ exports.createAdmin = async (req, res) => {
     // Check if company exists
     const company = await Company.findByPk(companyId);
     if (!company) return res.status(404).json({ error: "Company not found" });
+    // Get ADMIN role ID
+    const adminRole = await Role.findOne({ where: { code: "ADMIN" } });
+    if (!adminRole) {
+      return res.status(500).json({ error: "Admin role not found" });
+    }
+
     // Create admin user
     const user = await User.create({
       name,
@@ -15,7 +22,7 @@ exports.createAdmin = async (req, res) => {
       phone,
       passwordHash: password,
       companyId,
-      role: "ADMIN",
+      roleId: adminRole.id,
       isActive: true,
     });
     res.status(201).json(user);
@@ -27,8 +34,14 @@ exports.createAdmin = async (req, res) => {
 // Get all Admins for a company
 exports.getAdminsByCompany = async (req, res) => {
   try {
+    const adminRole = await Role.findOne({ where: { code: "ADMIN" } });
+    if (!adminRole) {
+      return res.status(500).json({ error: "Admin role not found" });
+    }
+
     const admins = await User.findAll({
-      where: { companyId: req.params.companyId, role: "ADMIN" },
+      where: { companyId: req.params.companyId, roleId: adminRole.id },
+      include: [{ model: Role }],
     });
     res.json(admins);
   } catch (err) {
@@ -39,8 +52,14 @@ exports.getAdminsByCompany = async (req, res) => {
 // Get Admin by ID
 exports.getAdminById = async (req, res) => {
   try {
+    const adminRole = await Role.findOne({ where: { code: "ADMIN" } });
+    if (!adminRole) {
+      return res.status(500).json({ error: "Admin role not found" });
+    }
+
     const admin = await User.findOne({
-      where: { id: req.params.id, role: "ADMIN" },
+      where: { id: req.params.id, roleId: adminRole.id },
+      include: [{ model: Role }],
     });
     if (!admin) return res.status(404).json({ error: "Admin not found" });
     res.json(admin);
@@ -53,8 +72,14 @@ exports.getAdminById = async (req, res) => {
 exports.updateAdmin = async (req, res) => {
   try {
     const { name, email, phone, password, isActive } = req.body;
+    const adminRole = await Role.findOne({ where: { code: "ADMIN" } });
+    if (!adminRole) {
+      return res.status(500).json({ error: "Admin role not found" });
+    }
+
     const admin = await User.findOne({
-      where: { id: req.params.id, role: "ADMIN" },
+      where: { id: req.params.id, roleId: adminRole.id },
+      include: [{ model: Role }],
     });
     if (!admin) return res.status(404).json({ error: "Admin not found" });
     if (name !== undefined) admin.name = name;

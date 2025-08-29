@@ -13,7 +13,8 @@ const models = {
   Invoice: require("../models/Invoice"),
   Payment: require("../models/Payment"),
   Feature: require("../models/Feature"),
-  UserPermission: require("../models/UserPermission"),
+  Role: require("../models/Role"),
+  RolePermission: require("../models/RolePermission"),
   Area: require("../models/Area"),
 };
 
@@ -80,18 +81,53 @@ const seedDatabase = async () => {
     // --- 1. Create Features ---
     console.log("Seeding Features...");
     const features = await models.Feature.bulkCreate([
-      {
-        code: "admin.dashboard.view",
-        name: "View Admin Dashboard",
-        module: "Dashboard",
-      },
+      // Super Admin Features
       {
         code: "superadmin.dashboard.view",
         name: "View Super Admin Dashboard",
         module: "Dashboard",
       },
+      {
+        code: "company.manage",
+        name: "Manage Companies",
+        module: "Companies",
+      },
+      {
+        code: "superadmin.users.manage",
+        name: "Manage All Users",
+        module: "Users",
+      },
+
+      // Admin Features
+      {
+        code: "admin.dashboard.view",
+        name: "View Admin Dashboard",
+        module: "Dashboard",
+      },
       { code: "agent.manage", name: "Manage Agents", module: "Users" },
       { code: "plan.manage", name: "Manage Plans", module: "Billing" },
+      { code: "customers.view", name: "View Customers", module: "Customers" },
+      { code: "plans.view", name: "View Plans", module: "Plans" },
+      { code: "agents.view", name: "View Agents", module: "Agents" },
+      { code: "reports.view", name: "View Reports", module: "Reports" },
+      { code: "payments.view", name: "View Payments", module: "Payments" },
+      { code: "customer.add", name: "Add Customer", module: "Customers" },
+      { code: "customer.edit", name: "Edit Customer", module: "Customers" },
+      {
+        code: "customer.view.all",
+        name: "View All Customers",
+        module: "Customers",
+      },
+      { code: "customer.delete", name: "Delete Customer", module: "Customers" },
+      { code: "area.manage", name: "Manage Areas", module: "Areas" },
+      {
+        code: "subscription.manage",
+        name: "Manage Subscriptions",
+        module: "Billing",
+      },
+      { code: "invoice.manage", name: "Manage Invoices", module: "Billing" },
+
+      // Agent Features
       {
         code: "agent.dashboard.view",
         name: "View Agent Dashboard",
@@ -102,29 +138,22 @@ const seedDatabase = async () => {
         name: "Manage Collections",
         module: "Billing",
       },
-      { code: "customers.view", name: "View Customers", module: "Customers" },
-      { code: "plans.view", name: "View Plans", module: "Plans" },
-      { code: "agents.view", name: "View Agents", module: "Agents" },
       {
         code: "collection.view",
         name: "View Collection",
         module: "Collection",
-      },
-      { code: "reports.view", name: "View Reports", module: "Reports" },
-      { code: "payments.view", name: "View Payments", module: "Payments" },
-      { code: "customer.add", name: "Add Customer", module: "Customers" },
-      { code: "customer.edit", name: "Edit Customer", module: "Customers" },
-      {
-        code: "customer.view.all",
-        name: "View All Customers",
-        module: "Customers",
       },
       {
         code: "customer.view.one",
         name: "View Single Customer",
         module: "Customers",
       },
-      { code: "customer.delete", name: "Delete Customer", module: "Customers" },
+      { code: "payment.collect", name: "Collect Payments", module: "Payments" },
+      {
+        code: "customer.hardware.view",
+        name: "View Customer Hardware",
+        module: "Customers",
+      },
     ]);
     const featureMap = features.reduce((map, feature) => {
       map[feature.code] = feature.id;
@@ -132,7 +161,33 @@ const seedDatabase = async () => {
     }, {});
     console.log("Features seeded.");
 
-    // --- 2. Create Company ---
+    // --- 2. Create Roles ---
+    console.log("Seeding Roles...");
+    const roles = await models.Role.bulkCreate([
+      {
+        name: "Super Admin",
+        code: "SUPER_ADMIN",
+        description: "Full system access with company management capabilities",
+      },
+      {
+        name: "Admin",
+        code: "ADMIN",
+        description: "Company-level administrative access",
+      },
+      {
+        name: "Agent",
+        code: "AGENT",
+        description: "Field agent with customer and collection access",
+      },
+    ]);
+
+    const roleMap = roles.reduce((map, role) => {
+      map[role.code] = role.id;
+      return map;
+    }, {});
+    console.log("Roles seeded.");
+
+    // --- 3. Create Company ---
     console.log("Seeding Company...");
     const company = await models.Company.create({
       name: "Nexus Telecom",
@@ -140,14 +195,14 @@ const seedDatabase = async () => {
     });
     console.log("Company seeded.");
 
-    // --- 3. Create Users ---
+    // --- 4. Create Users ---
     console.log("Seeding Users...");
     const superAdmin = await models.User.create({
       name: "Super Admin",
       email: "super@admin.com",
       phone: "0000000000",
       passwordHash: "supersecret123",
-      role: "SUPER_ADMIN",
+      roleId: roleMap["SUPER_ADMIN"],
       companyId: null,
     });
 
@@ -177,7 +232,7 @@ const seedDatabase = async () => {
           email: `admin${i}@nexustelecom.com`,
           phone: `111111111${i}`,
           passwordHash: "adminpass123",
-          role: "ADMIN",
+          roleId: roleMap["ADMIN"],
           companyId: company.id,
         })
       );
@@ -192,63 +247,55 @@ const seedDatabase = async () => {
           email: `agent${i}@nexustelecom.com`,
           phone: `222222222${i.toString().padStart(2, "0")}`,
           passwordHash: "agentpass123",
-          role: "AGENT",
+          roleId: roleMap["AGENT"],
           companyId: company.id,
         })
       );
     }
     console.log("Users seeded.");
 
-    // --- 4. Grant Permissions ---
+    // --- 5. Grant Permissions ---
     console.log("Granting Permissions...");
-    const permissions = [];
+    const rolePermissions = [];
+
+    // Super Admin gets all features
     features.forEach((f) =>
-      permissions.push({ userId: superAdmin.id, featureId: f.id })
+      rolePermissions.push({ roleId: roleMap["SUPER_ADMIN"], featureId: f.id })
     );
-    admins.forEach((admin) => {
-      permissions.push({
-        userId: admin.id,
-        featureId: featureMap["admin.dashboard.view"],
-      });
-      permissions.push({
-        userId: admin.id,
-        featureId: featureMap["agent.manage"],
-      });
-      permissions.push({
-        userId: admin.id,
-        featureId: featureMap["plan.manage"],
-      });
-      permissions.push({
-        userId: admin.id,
-        featureId: featureMap["customer.add"],
-      });
-      permissions.push({
-        userId: admin.id,
-        featureId: featureMap["customer.edit"],
-      });
-      permissions.push({
-        userId: admin.id,
-        featureId: featureMap["customer.view.all"],
-      });
+
+    // Admin gets all features except super admin features
+    const adminFeatures = features.filter(
+      (f) =>
+        !f.code.startsWith("superadmin.") &&
+        !f.code.startsWith("company.manage")
+    );
+    adminFeatures.forEach((f) =>
+      rolePermissions.push({ roleId: roleMap["ADMIN"], featureId: f.id })
+    );
+
+    // Agent gets limited features
+    const agentFeatureCodes = [
+      "agent.dashboard.view",
+      "collection.manage",
+      "collection.view",
+      "customer.view.one",
+      "customer.add",
+      "payment.collect",
+      "customer.hardware.view",
+    ];
+    agentFeatureCodes.forEach((code) => {
+      if (featureMap[code]) {
+        rolePermissions.push({
+          roleId: roleMap["AGENT"],
+          featureId: featureMap[code],
+        });
+      }
     });
-    agents.forEach((agent) => {
-      permissions.push({
-        userId: agent.id,
-        featureId: featureMap["agent.dashboard.view"],
-      });
-      permissions.push({
-        userId: agent.id,
-        featureId: featureMap["collection.manage"],
-      });
-      permissions.push({
-        userId: agent.id,
-        featureId: featureMap["customer.view.one"],
-      });
-    });
-    await models.UserPermission.bulkCreate(permissions);
+
+    await models.RolePermission.bulkCreate(rolePermissions);
     console.log("Permissions granted.");
 
-    // --- 5. Create Plans ---
+    // --- 6. Create Plans ---
     console.log("Seeding Plans...");
     const plans = await models.Plan.bulkCreate([
       {
@@ -284,7 +331,7 @@ const seedDatabase = async () => {
     ]);
     console.log("Plans seeded.");
 
-    // --- 6. Create Customers and related data in a loop ---
+    // --- 7. Create Customers and related data in a loop ---
     console.log(
       "Seeding Customers, Subscriptions, Hardware, Invoices, and Payments..."
     );

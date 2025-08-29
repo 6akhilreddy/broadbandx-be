@@ -1,6 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const customerController = require("../controllers/customerController");
+const {
+  companyFilter,
+  companyAccess,
+  requirePermission,
+  requirePermissionWithCompany,
+} = require("../middlewares");
 
 /**
  * @swagger
@@ -8,9 +14,71 @@ const customerController = require("../controllers/customerController");
  *   schemas:
  *     Customer:
  *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *           description: Customer ID
+ *         companyId:
+ *           type: integer
+ *           description: Company ID (automatically assigned based on user's company)
+ *         fullName:
+ *           type: string
+ *           description: Customer's full name
+ *         billingName:
+ *           type: string
+ *           description: Customer's billing name
+ *         phone:
+ *           type: string
+ *           description: Primary phone number
+ *         phoneSecondary:
+ *           type: string
+ *           description: Secondary phone number
+ *         email:
+ *           type: string
+ *           description: Customer's email address
+ *         address:
+ *           type: string
+ *           description: Customer's address
+ *         areaId:
+ *           type: integer
+ *           description: Area ID where customer is located
+ *         customerCode:
+ *           type: string
+ *           description: Unique customer code
+ *         latitude:
+ *           type: string
+ *           description: Latitude coordinates
+ *         longitude:
+ *           type: string
+ *           description: Longitude coordinates
+ *         assignedAgentId:
+ *           type: integer
+ *           description: ID of assigned agent
+ *         installationDate:
+ *           type: string
+ *           format: date
+ *           description: Installation date
+ *         securityDeposit:
+ *           type: number
+ *           description: Security deposit amount
+ *         gstNumber:
+ *           type: string
+ *           description: GST number
+ *         advance:
+ *           type: integer
+ *           description: Advance payment amount
+ *         remarks:
+ *           type: string
+ *           description: Additional remarks
+ *         createdBy:
+ *           type: integer
+ *           description: User ID who created the customer
+ *         isActive:
+ *           type: boolean
+ *           description: Customer's active status
  *   tags:
  *     - name: Customers
- *       description: Customer management
+ *       description: Customer management with role-based access control
  */
 
 /**
@@ -18,7 +86,18 @@ const customerController = require("../controllers/customerController");
  * /customers:
  *   post:
  *     summary: Create a new customer with hardware and subscription
+ *     description: |
+ *       Create a new customer with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can create customers for any company (must specify companyId)
+ *       - **ADMIN/AGENT**: Can only create customers for their own company (companyId automatically assigned)
+ *
+ *       **Required Features:**
+ *       - `customer.add` feature permission required
  *     tags: [Customers]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -149,7 +228,11 @@ const customerController = require("../controllers/customerController");
  *       400:
  *         description: Bad request
  */
-router.post("/", customerController.createCustomer);
+router.post(
+  "/",
+  ...requirePermissionWithCompany("customer.add"),
+  customerController.createCustomer
+);
 
 /**
  * @swagger
@@ -158,8 +241,15 @@ router.post("/", customerController.createCustomer);
  *     summary: Get all customers with their hardware, plan, subscription, and payment details
  *     description: |
  *       Fetch customers with pagination, search, and filtering capabilities.
+ *       
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view all customers across all companies
+ *       - **ADMIN/AGENT**: Can only view customers from their own company
+ *       
+ *       **Required Features:**
+ *       - `customers.view` or `customer.view.all` feature permission required
  *
- *       Example calls:
+ *       **Example calls:**
  *       - Basic pagination: `/customers?page=1&limit=10`
  *       - Search: `/customers?search=john`
  *       - Filter by area: `/customers?areaId=1`
@@ -167,6 +257,8 @@ router.post("/", customerController.createCustomer);
  *       - Filter by date: `/customers?dueDateFrom=2025-08-01&dueDateTo=2025-08-31`
  *       - Combined: `/customers?page=1&limit=10&search=john&areaId=1&paymentStatus=unpaid`
  *     tags: [Customers]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: query
  *         name: page
@@ -344,15 +436,31 @@ router.post("/", customerController.createCustomer);
  *                   hasPrevious: false
  
  */
-router.get("/", customerController.getAllCustomers);
+router.get(
+  "/",
+  ...requirePermission("customers.view"),
+  ...companyFilter,
+  customerController.getAllCustomers
+);
 
 /**
  * @swagger
  * /customers/{id}:
  *   get:
  *     summary: Get customer by ID with all related details
+ *     description: |
+ *       Get detailed customer information with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view any customer across all companies
+ *       - **ADMIN/AGENT**: Can only view customers from their own company
+ *
+ *       **Required Features:**
+ *       - `customer.view.one` or `customer.view.all` feature permission required
  *     tags:
  *       - Customers
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -561,14 +669,30 @@ router.get("/", customerController.getAllCustomers);
  *       404:
  *         description: Customer not found
  */
-router.get("/:id", customerController.getCustomerById);
+router.get(
+  "/:id",
+  ...requirePermission("customer.view.one"),
+  ...companyFilter,
+  customerController.getCustomerById
+);
 
 /**
  * @swagger
  * /customers/{id}:
  *   put:
  *     summary: Update customer by ID
+ *     description: |
+ *       Update customer information with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can update any customer across all companies
+ *       - **ADMIN/AGENT**: Can only update customers from their own company
+ *
+ *       **Required Features:**
+ *       - `customer.edit` feature permission required
  *     tags: [Customers]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -713,14 +837,29 @@ router.get("/:id", customerController.getCustomerById);
  *       404:
  *         description: Customer not found
  */
-router.put("/:id", customerController.updateCustomer);
+router.put(
+  "/:id",
+  ...requirePermissionWithCompany("customer.edit"),
+  customerController.updateCustomer
+);
 
 /**
  * @swagger
  * /customers/{id}:
  *   delete:
  *     summary: Delete customer by ID
+ *     description: |
+ *       Delete customer with role-based access control.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can delete any customer across all companies
+ *       - **ADMIN/AGENT**: Can only delete customers from their own company
+ *
+ *       **Required Features:**
+ *       - `customer.delete` feature permission required
  *     tags: [Customers]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -734,6 +873,13 @@ router.put("/:id", customerController.updateCustomer);
  *       404:
  *         description: Customer not found
  */
-router.delete("/:id", customerController.deleteCustomer);
+router.delete(
+  "/:id",
+  ...requirePermissionWithCompany("customer.delete"),
+  customerController.deleteCustomer
+);
+
+// Test route
+router.get("/test/data", customerController.testCustomerData);
 
 module.exports = router;
