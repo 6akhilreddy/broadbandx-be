@@ -435,16 +435,16 @@ exports.getCustomerById = async (req, res) => {
             areaName: customer.Area.areaName,
           }
         : null,
-      hardware: customer.CustomerHardware?.[0] || null,
-      subscription: customer.Subscription?.[0]
+      hardware: customer.CustomerHardwares?.[0] || null,
+      subscription: customer.Subscriptions?.[0]
         ? {
-            ...customer.Subscription[0].toJSON(),
-            plan: customer.Subscription[0].Plan
+            ...customer.Subscriptions[0].toJSON(),
+            plan: customer.Subscriptions[0].Plan
               ? {
-                  name: customer.Subscription[0].Plan.name,
-                  monthlyPrice: customer.Subscription[0].Plan.monthlyPrice,
-                  code: customer.Subscription[0].Plan.code,
-                  benefits: customer.Subscription[0].Plan.benefits,
+                  name: customer.Subscriptions[0].Plan.name,
+                  monthlyPrice: customer.Subscriptions[0].Plan.monthlyPrice,
+                  code: customer.Subscriptions[0].Plan.code,
+                  benefits: customer.Subscriptions[0].Plan.benefits,
                 }
               : null,
           }

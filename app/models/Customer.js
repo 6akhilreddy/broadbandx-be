@@ -18,7 +18,7 @@ const Customer = sequelize.define(
     email: { type: DataTypes.STRING, unique: true },
     address: { type: DataTypes.TEXT },
     areaId: { type: DataTypes.INTEGER, allowNull: false },
-    customerCode: { type: DataTypes.STRING, unique: true },
+    customerCode: { type: DataTypes.STRING },
     latitude: { type: DataTypes.STRING },
     longitude: { type: DataTypes.STRING },
     assignedAgentId: { type: DataTypes.INTEGER },

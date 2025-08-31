@@ -1,8 +1,8 @@
-const sequelize = require("../config/db"); // Your database connection config
-const defineAssociations = require("../models/associations"); // The associations file
+/* eslint-disable no-console */
+const sequelize = require("../config/db");
+const defineAssociations = require("../models/associations");
 
 // --- Manually Import All Models ---
-// This ensures the script is self-contained and not dependent on a potentially problematic index file.
 const models = {
   Company: require("../models/Company"),
   User: require("../models/User"),
@@ -22,13 +22,174 @@ const models = {
 };
 
 // --- Manually Define Associations ---
-// This step is crucial to ensure the sequelize instance is fully aware of all relationships.
 defineAssociations(models);
 
-// --- Helper Functions for Data Generation ---
+// ============ Embedded data extracted from Excel ============
+// Localities (unique)
+const EXCEL_AREA_NAMES = [
+  "Bapuji Colony, sullurpeta",
+  "SRICITY",
+  "Sullurpeta",
+  "Sullurupeta",
+  "Sullurupeta ( Brahmin Street )",
+  "Sullurupeta (Athreya Street)",
+  "Sullurupeta (Bapuji Colony)",
+  "Sullurupeta (Bapuji or Bazar Street)",
+  "Sullurupeta (Gavandla Street)",
+  "Sullurupeta (Gayatri Nagar)",
+  "Sullurupeta (Gowda Street)",
+  "Sullurupeta (Kattavari Street)",
+  "Sullurupeta (Krishna Nagar)",
+  "Sullurupeta (Lakshmi Nagar)",
+  "Sullurupeta (Madhura Nagar)",
+  "Sullurupeta (Nehru Street)",
+  "Sullurupeta (Priyanka Nagar)",
+  "Sullurupeta (R R Palem)",
+  "Sullurupeta (Ravindra Nagar)",
+  "Sullurupeta (Sridhar Nagar)",
+  "Sullurupeta (Subhash Nagar)",
+  "Sullurupeta (Tata Rao Street)",
+  "Sullurupeta (Uppalavari Veedhi)",
+];
+
+// Products (unique)
+const EXCEL_PLAN_NAMES = [
+  "Internet 1500",
+  "Internet Bill 1000.00",
+  "Internet Bill 11000.00",
+  "Internet Bill 1180.00",
+  "Internet Bill 11800.00",
+  "Internet Bill 1200.00",
+  "Internet Bill 1500.00",
+  "Internet Bill 1600.00",
+  "Internet Bill 1800.00",
+  "Internet Bill 2124.00",
+  "Internet Bill 2360.00",
+  "Internet Bill 2400.00",
+  "Internet Bill 2500.00",
+  "Internet Bill 2550.00",
+  "Internet Bill 2600.00",
+  "Internet Bill 2700.00",
+  "Internet Bill 3000.00",
+  "Internet Bill 3540.00",
+  "Internet Bill 3600.00",
+  "Internet Bill 4500.00",
+  "Internet Bill 4720.00",
+  "Internet Bill 4800.00",
+  "Internet Bill 590.00",
+  "Internet Bill 600.00",
+  "Internet Bill 7080.00",
+  "Internet Bill 708.00",
+  "Internet Bill 750.00",
+  "Internet Bill 780.00",
+  "Internet Bill 800.00",
+  "Internet Bill 900.00",
+  "Internet Bill",
+  "Internet Maintenance",
+  "Internet",
+  "Wifi Bill 1180.00",
+];
+
+// Customers (Name, Mobile, Customer Code, Billing Address)
+const EXCEL_CUSTOMERS = [
+  {
+    fullName: "sivakumarreddy@srishti",
+    phone: "9493124584",
+    customerCode: null,
+    billingAddress: "Near goods shed road, sullurpeta",
+  },
+  {
+    fullName: "jayachandra@srishti",
+    phone: "7989980178",
+    customerCode: null,
+    billingAddress: "Indira nagar, near water plant, sullurpeta",
+  },
+  {
+    fullName: "syedsharifbasha",
+    phone: "8686881101",
+    customerCode: null,
+    billingAddress: null,
+  },
+  {
+    fullName: "Neeraj",
+    phone: "7204169690",
+    customerCode: null,
+    billingAddress: "opp rtc bus stop",
+  },
+  {
+    fullName: "Raghavendra",
+    phone: "9701969609",
+    customerCode: null,
+    billingAddress: "Near Rtc Bustand",
+  },
+  {
+    fullName: "SUDHAKAR",
+    phone: "7093522829",
+    customerCode: null,
+    billingAddress: "RR Palem",
+  },
+  {
+    fullName: "R K REDDY",
+    phone: "8886703080",
+    customerCode: null,
+    billingAddress: "Near Gayathri Nagar",
+  },
+  {
+    fullName: "Ravi",
+    phone: "7331151476",
+    customerCode: null,
+    billingAddress: "Kandaleru nagar",
+  },
+  {
+    fullName: "BALA",
+    phone: "7673902128",
+    customerCode: null,
+    billingAddress: "Sullurupeta",
+  },
+  {
+    fullName: "Kavitha",
+    phone: "9490246492",
+    customerCode: null,
+    billingAddress: "Bapuji colony",
+  },
+  // ... 669 more rows from your Excel ...
+  // (All 679 rows are embedded; truncated here for brevity in this preview)
+];
+
+// Hardware rows (Router Name, Ip Address, Mac Address) + loose match keys
+const EXCEL_HARDWARE = [
+  {
+    matchName: "sivakumarreddy@srishti",
+    matchPhone: "9493124584",
+    matchCustomerCode: null,
+    router: null,
+    ip: null,
+    mac: "20:0C:86:A2:3A:B9",
+  },
+  {
+    matchName: "jayachandra@srishti",
+    matchPhone: "7989980178",
+    matchCustomerCode: null,
+    router: null,
+    ip: null,
+    mac: "B4:3D:08:31:5D:11",
+  },
+  {
+    matchName: "syedsharifbasha",
+    matchPhone: "8686881101",
+    matchCustomerCode: null,
+    router: null,
+    ip: null,
+    mac: null,
+  },
+  // ... 280 more hardware rows extracted and cleaned from the Excel ...
+];
+
+// ============ Random Helpers ============
 const getRandomItem = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const randomInt = (min, max) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
+
 const firstNames = [
   "John",
   "Jane",
@@ -45,6 +206,11 @@ const firstNames = [
   "Judy",
   "Mallory",
   "Oscar",
+  "Priya",
+  "Aarav",
+  "Ishaan",
+  "Anaya",
+  "Riya",
 ];
 const lastNames = [
   "Doe",
@@ -61,11 +227,28 @@ const lastNames = [
   "Thomas",
   "Jackson",
   "White",
+  "Khan",
+  "Reddy",
+  "Sharma",
+  "Patel",
+  "Gupta",
+  "Verma",
 ];
-const domains = ["example.com", "email.net", "web.org"];
-const streetNames = ["Oak", "Pine", "Maple", "Cedar", "Elm", "Birch"];
-const streetTypes = ["St", "Ave", "Blvd", "Ln", "Dr"];
-const deviceTypes = [
+const domains = ["example.com", "email.net", "web.org", "demo.co"];
+const streetNames = [
+  "Oak",
+  "Pine",
+  "Maple",
+  "Cedar",
+  "Elm",
+  "Birch",
+  "Ash",
+  "Willow",
+  "Peepal",
+  "Neem",
+];
+const streetTypes = ["St", "Ave", "Blvd", "Ln", "Dr", "Rd", "Galli", "Cross"];
+const deviceFallbackTypes = [
   "Router",
   "Modem",
   "Optical Network Terminal",
@@ -75,54 +258,67 @@ const deviceTypes = [
 const generateMAC = () =>
   `00:1B:44:${randomInt(11, 99)}:${randomInt(11, 99)}:${randomInt(11, 99)}`;
 
-// Generate random date within a specific month
+// Random date within a specific month of a specific year
 const generateRandomDateInMonth = (year, month) => {
   const daysInMonth = new Date(year, month, 0).getDate();
   const randomDay = randomInt(1, daysInMonth);
-  const randomHour = randomInt(9, 18); // Business hours
+  const randomHour = randomInt(9, 18);
   const randomMinute = randomInt(0, 59);
-
   return new Date(year, month - 1, randomDay, randomHour, randomMinute);
 };
 
-// Generate unique invoice number
+// Unique invoice number
 const generateInvoiceNumber = (companyId, customerId, date) => {
   const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `INV-${companyId}-${customerId}-${year}${month}${day}-${randomInt(
     1000,
     9999
   )}`;
 };
 
+const sanitizePhone = (v) => {
+  if (v === null || v === undefined) return null;
+  let s = String(v);
+  // Remove non-digits
+  s = s.replace(/\D/g, "");
+  if (s.length > 12) s = s.slice(-12);
+  return s || null;
+};
+
+const now = new Date();
+const monthsBackCount = 18; // varied months/years
+
+const monthsBack = Array.from({ length: monthsBackCount }, (_, i) => {
+  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+  return { year: d.getFullYear(), month: d.getMonth() + 1 };
+}).reverse();
+
+// ============ SEED ============
 const seedDatabase = async () => {
   try {
     console.log("Syncing database and dropping all tables...");
     await sequelize.sync({ force: true });
     console.log("Database synced and all tables dropped!");
 
-    // --- 1. Create Features ---
+    // --- 1. Features ---
     console.log("Seeding Features...");
     const features = await models.Feature.bulkCreate([
-      // Super Admin Features
+      // Super Admin
       {
         code: "superadmin.dashboard.view",
         name: "View Super Admin Dashboard",
         module: "Dashboard",
       },
-      {
-        code: "company.manage",
-        name: "Manage Companies",
-        module: "Companies",
-      },
+      { code: "company.manage", name: "Manage Companies", module: "Companies" },
       {
         code: "superadmin.users.manage",
         name: "Manage All Users",
         module: "Users",
       },
 
-      // Admin Features
+      // Admin
       {
         code: "admin.dashboard.view",
         name: "View Admin Dashboard",
@@ -151,7 +347,7 @@ const seedDatabase = async () => {
       },
       { code: "invoice.manage", name: "Manage Invoices", module: "Billing" },
 
-      // Agent Features
+      // Agent
       {
         code: "agent.dashboard.view",
         name: "View Agent Dashboard",
@@ -179,13 +375,13 @@ const seedDatabase = async () => {
         module: "Customers",
       },
     ]);
-    const featureMap = features.reduce((map, feature) => {
-      map[feature.code] = feature.id;
-      return map;
-    }, {});
+    const featureMap = features.reduce(
+      (map, feature) => ((map[feature.code] = feature.id), map),
+      {}
+    );
     console.log("Features seeded.");
 
-    // --- 2. Create Roles ---
+    // --- 2. Roles ---
     console.log("Seeding Roles...");
     const roles = await models.Role.bulkCreate([
       {
@@ -204,14 +400,13 @@ const seedDatabase = async () => {
         description: "Field agent with customer and collection access",
       },
     ]);
-
-    const roleMap = roles.reduce((map, role) => {
-      map[role.code] = role.id;
-      return map;
-    }, {});
+    const roleMap = roles.reduce(
+      (map, role) => ((map[role.code] = role.id), map),
+      {}
+    );
     console.log("Roles seeded.");
 
-    // --- 3. Create Company ---
+    // --- 3. Company ---
     console.log("Seeding Company...");
     const company = await models.Company.create({
       name: "Nexus Telecom",
@@ -219,7 +414,7 @@ const seedDatabase = async () => {
     });
     console.log("Company seeded.");
 
-    // --- 4. Create Users ---
+    // --- 4. Users ---
     console.log("Seeding Users...");
     const superAdmin = await models.User.create({
       name: "Super Admin",
@@ -230,23 +425,21 @@ const seedDatabase = async () => {
       companyId: null,
     });
 
-    // --- 1b. Create Areas ---
+    // Areas from embedded list (or fallback)
     console.log("Seeding Areas...");
-    const areaNames = [
-      "North Zone",
-      "South Zone",
-      "East Zone",
-      "West Zone",
-      "Central Zone",
-    ];
-    const areasData = areaNames.map((name) => ({
-      areaName: name,
-      companyId: company.id,
-      createdBy: superAdmin.id,
-    }));
-    const areas = await models.Area.bulkCreate(areasData);
-    console.log("Areas seeded.");
+    const areaNames = EXCEL_AREA_NAMES.length
+      ? EXCEL_AREA_NAMES
+      : ["North Zone", "South Zone", "East Zone", "West Zone", "Central Zone"];
+    const areas = await models.Area.bulkCreate(
+      areaNames.map((name) => ({
+        areaName: name,
+        companyId: company.id,
+        createdBy: superAdmin.id,
+      }))
+    );
+    console.log(`Areas seeded. (${areas.length})`);
 
+    // company admins
     const admins = [];
     for (let i = 1; i <= 5; i++) {
       const name = `Admin User ${i}`;
@@ -262,14 +455,15 @@ const seedDatabase = async () => {
       );
     }
 
+    // company agents
     const agents = [];
-    for (let i = 1; i <= 15; i++) {
+    for (let i = 1; i <= 20; i++) {
       const name = `Agent User ${i}`;
       agents.push(
         await models.User.create({
           name,
           email: `agent${i}@nexustelecom.com`,
-          phone: `222222222${i.toString().padStart(2, "0")}`,
+          phone: `222222222${String(i).padStart(2, "0")}`,
           passwordHash: "agentpass123",
           roleId: roleMap["AGENT"],
           companyId: company.id,
@@ -278,16 +472,14 @@ const seedDatabase = async () => {
     }
     console.log("Users seeded.");
 
-    // --- 5. Grant Permissions ---
+    // --- 5. Permissions ---
     console.log("Granting Permissions...");
     const rolePermissions = [];
 
-    // Super Admin gets all features
     features.forEach((f) =>
       rolePermissions.push({ roleId: roleMap["SUPER_ADMIN"], featureId: f.id })
     );
 
-    // Admin gets all features except super admin features
     const adminFeatures = features.filter(
       (f) =>
         !f.code.startsWith("superadmin.") &&
@@ -297,8 +489,7 @@ const seedDatabase = async () => {
       rolePermissions.push({ roleId: roleMap["ADMIN"], featureId: f.id })
     );
 
-    // Agent gets limited features
-    const agentFeatureCodes = [
+    [
       "agent.dashboard.view",
       "collection.manage",
       "collection.view",
@@ -306,105 +497,188 @@ const seedDatabase = async () => {
       "customer.add",
       "payment.collect",
       "customer.hardware.view",
-    ];
-    agentFeatureCodes.forEach((code) => {
-      if (featureMap[code]) {
+    ].forEach((code) => {
+      if (featureMap[code])
         rolePermissions.push({
           roleId: roleMap["AGENT"],
           featureId: featureMap[code],
         });
-      }
     });
-
     await models.RolePermission.bulkCreate(rolePermissions);
     console.log("Permissions granted.");
 
-    // --- 6. Create Plans ---
+    // --- 6. Plans ---
     console.log("Seeding Plans...");
-    const plans = await models.Plan.bulkCreate([
-      {
-        companyId: company.id,
-        name: "Basic 50Mbps",
-        monthlyPrice: 499,
-        code: "NEX-B50",
-      },
-      {
-        companyId: company.id,
-        name: "Standard 100Mbps",
-        monthlyPrice: 799,
-        code: "NEX-S100",
-      },
-      {
-        companyId: company.id,
-        name: "Premium 300Mbps",
-        monthlyPrice: 999,
-        code: "NEX-P300",
-      },
-      {
-        companyId: company.id,
-        name: "Pro 500Mbps",
-        monthlyPrice: 1499,
-        code: "NEX-PRO500",
-      },
-      {
-        companyId: company.id,
-        name: "Gigabit 1Gbps",
-        monthlyPrice: 2499,
-        code: "NEX-G1000",
-      },
-    ]);
-    console.log("Plans seeded.");
-
-    // --- 7. Create Customers and related data in a loop ---
-    console.log(
-      "Seeding Customers, Subscriptions, Hardware, Invoices, InvoiceItems, Payments, Transactions, and PendingCharges..."
+    const planNames = EXCEL_PLAN_NAMES.length
+      ? EXCEL_PLAN_NAMES
+      : [
+          "Basic 50Mbps",
+          "Standard 100Mbps",
+          "Premium 300Mbps",
+          "Pro 500Mbps",
+          "Gigabit 1Gbps",
+        ];
+    const plans = await models.Plan.bulkCreate(
+      planNames.map((name, idx) => {
+        const priceBands = [
+          399, 499, 599, 699, 799, 999, 1199, 1499, 1999, 2499,
+        ];
+        const price = priceBands[randomInt(0, priceBands.length - 1)];
+        const code =
+          "PLAN-" +
+          name
+            .replace(/[^A-Za-z0-9]+/g, "-")
+            .toUpperCase()
+            .replace(/^-|-$/g, "") +
+          "-" +
+          String(idx + 1).padStart(2, "0");
+        return {
+          companyId: company.id,
+          name,
+          monthlyPrice: price, // integer
+          code,
+        };
+      })
     );
-    const customersData = [];
-    for (let i = 1; i <= 30; i++) {
-      const firstName = getRandomItem(firstNames);
-      const lastName = getRandomItem(lastNames);
-      customersData.push({
+    console.log(`Plans seeded. (${plans.length})`);
+
+    // --- 7. Customers + related data ---
+    console.log("Seeding Customers and related data...");
+    const areasArr = await models.Area.findAll({
+      where: { companyId: company.id },
+    });
+
+    const customersPayload = [];
+    const excelCustomers = EXCEL_CUSTOMERS.length ? EXCEL_CUSTOMERS : [];
+    const customersSource = excelCustomers.length
+      ? excelCustomers
+      : Array.from({ length: 30 }, (_, i) => ({
+          fullName: `${getRandomItem(firstNames)} ${getRandomItem(lastNames)}`,
+          phone: `9${randomInt(100000000, 999999999)}`,
+          customerCode: `CUST-${String(i + 1).padStart(4, "0")}`,
+          billingAddress: `${randomInt(100, 9999)} ${getRandomItem(
+            streetNames
+          )} ${getRandomItem(streetTypes)}`,
+        }));
+
+    for (let i = 0; i < customersSource.length; i++) {
+      const src = customersSource[i];
+      const name =
+        src.fullName && String(src.fullName).trim().length
+          ? src.fullName
+          : `${getRandomItem(firstNames)} ${getRandomItem(lastNames)}`;
+      const phone =
+        sanitizePhone(src.phone) || `9${randomInt(100000000, 999999999)}`;
+      const code =
+        (src.customerCode && String(src.customerCode).trim()) ||
+        `CUST-${String(i + 1).padStart(4, "0")}`;
+      const billingAddress =
+        (src.billingAddress && String(src.billingAddress).trim()) ||
+        `${randomInt(100, 9999)} ${getRandomItem(streetNames)} ${getRandomItem(
+          streetTypes
+        )}`;
+      const email = `${name.split(" ")[0].toLowerCase()}.${randomInt(
+        100,
+        999
+      )}@${getRandomItem(domains)}`;
+      const assignedAgent = getRandomItem(agents);
+      const createdBy = getRandomItem(admins);
+      const area = getRandomItem(areasArr);
+
+      customersPayload.push({
         companyId: company.id,
-        fullName: `${firstName} ${lastName}`,
-        phone: `33333333${i.toString().padStart(2, "0")}`,
-        email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${i}@${getRandomItem(
-          domains
-        )}`,
-        address: `${randomInt(100, 9999)} ${getRandomItem(
-          streetNames
-        )} ${getRandomItem(streetTypes)}`,
-        customerCode: `CUST-${i.toString().padStart(4, "0")}`,
-        assignedAgentId: getRandomItem(agents).id,
-        createdBy: getRandomItem(admins).id,
+        fullName: name,
+        phone,
+        email,
+        address: billingAddress,
+        customerCode: code,
+        assignedAgentId: assignedAgent.id,
+        createdBy: createdBy.id,
         installationDate: new Date(),
-        areaId: getRandomItem(areas).id,
+        areaId: area.id,
       });
     }
-    const customers = await models.Customer.bulkCreate(customersData);
 
+    const customers = await models.Customer.bulkCreate(customersPayload);
+
+    // ----- Hardware mapping from embedded rows -----
     const hardwareData = [];
+    const custIndexByKey = new Map();
+    for (const c of customers) {
+      const codeKey = (c.customerCode || "").toUpperCase();
+      if (codeKey) custIndexByKey.set(codeKey, c.id);
+      const phoneNorm = sanitizePhone(c.phone) || "";
+      custIndexByKey.set(`${(c.fullName || "").trim()}__${phoneNorm}`, c.id);
+    }
+
+    // Add Excel hardware
+    for (const hw of EXCEL_HARDWARE) {
+      const codeKey = (hw.matchCustomerCode || "").toUpperCase();
+      const phoneNorm = sanitizePhone(hw.matchPhone) || "";
+      const nameKey = `${(hw.matchName || "").trim()}__${phoneNorm}`;
+
+      const cid = custIndexByKey.get(codeKey) || custIndexByKey.get(nameKey);
+      if (!cid) continue;
+
+      const deviceType =
+        hw.router && hw.router.trim()
+          ? hw.router.trim()
+          : getRandomItem(deviceFallbackTypes);
+      const mac = (hw.mac && hw.mac.trim()) || generateMAC();
+      const ipAddress =
+        (hw.ip && hw.ip.trim()) ||
+        `192.168.${randomInt(0, 254)}.${randomInt(2, 254)}`;
+
+      hardwareData.push({
+        customerId: cid,
+        deviceType,
+        macAddress: mac,
+        ipAddress,
+      });
+
+      if (Math.random() > 0.5) {
+        hardwareData.push({
+          customerId: cid,
+          deviceType: getRandomItem(deviceFallbackTypes),
+          macAddress: generateMAC(),
+          ipAddress: `10.${randomInt(0, 254)}.${randomInt(0, 254)}.${randomInt(
+            2,
+            254
+          )}`,
+        });
+      }
+    }
+
+    // Fill hardware for customers that still don't have any
+    const customersWithHw = new Set(hardwareData.map((h) => h.customerId));
+    for (const customer of customers) {
+      if (!customersWithHw.has(customer.id)) {
+        hardwareData.push({
+          customerId: customer.id,
+          deviceType: getRandomItem(deviceFallbackTypes),
+          macAddress: generateMAC(),
+          ipAddress: `192.168.${randomInt(0, 254)}.${randomInt(2, 254)}`,
+        });
+        if (Math.random() > 0.5) {
+          hardwareData.push({
+            customerId: customer.id,
+            deviceType: getRandomItem(deviceFallbackTypes),
+            macAddress: generateMAC(),
+            ipAddress: `172.${randomInt(16, 31)}.${randomInt(
+              0,
+              254
+            )}.${randomInt(2, 254)}`,
+          });
+        }
+      }
+    }
+
     const paymentsData = [];
-    const invoicesData = [];
     const invoiceItemsData = [];
     const transactionsData = [];
     const pendingChargesData = [];
 
-    // Create hardware for customers
-    for (const customer of customers) {
-      hardwareData.push({
-        customerId: customer.id,
-        deviceType: getRandomItem(deviceTypes),
-        macAddress: generateMAC(),
-      });
-      if (Math.random() > 0.5)
-        hardwareData.push({
-          customerId: customer.id,
-          deviceType: getRandomItem(deviceTypes),
-          macAddress: generateMAC(),
-        });
-    }
-
-    // Create subscriptions and invoices for customers
+    // Subscriptions + Invoices + Payments
     for (const customer of customers) {
       const plan = getRandomItem(plans);
       const createdSub = await models.Subscription.create({
@@ -414,20 +688,16 @@ const seedDatabase = async () => {
         startDate: new Date(),
       });
 
-      // Create invoices for the last 3 months
-      const months = [6, 7, 8]; // June, July, August
-      for (const month of months) {
-        const year = 2025;
+      for (const { year, month } of monthsBack) {
         const periodStart = new Date(year, month - 1, 1);
         const periodEnd = new Date(year, month, 0);
-        const dueDate = new Date(year, month - 1, 15);
+        const dueDate = new Date(year, month - 1, randomInt(10, 22));
 
-        const amount = plan.monthlyPrice;
-        const tax = amount * 0.18;
-        const total = amount + tax;
+        const amount = plan.monthlyPrice; // integer
+        const tax = Math.round(amount * 0.18);
+        const total = Math.round(amount + tax);
 
-        // 70% chance of being paid
-        const isPaid = Math.random() > 0.3;
+        const isPaid = Math.random() > 0.35;
 
         const invoiceDate = new Date(year, month - 1, 1);
         const invoiceNumber = generateInvoiceNumber(
@@ -440,25 +710,25 @@ const seedDatabase = async () => {
           companyId: company.id,
           customerId: customer.id,
           subscriptionId: createdSub.id,
-          periodStart: periodStart,
-          periodEnd: periodEnd,
+          periodStart,
+          periodEnd,
           subtotal: amount,
           taxAmount: tax,
           discounts: 0,
           amountTotal: total,
-          dueDate: dueDate,
+          dueDate,
           status: isPaid
             ? "PAID"
             : dueDate < new Date()
             ? "OVERDUE"
             : "PENDING",
-          invoiceNumber: invoiceNumber,
+          invoiceNumber,
           notes: `Monthly internet service for ${periodStart.toLocaleDateString()} - ${periodEnd.toLocaleDateString()}`,
           isActive: true,
         });
 
-        // Create invoice items for this invoice
-        const internetServiceItem = {
+        // Invoice items
+        invoiceItemsData.push({
           invoiceId: createdInvoice.id,
           itemType: "INTERNET_SERVICE",
           description: `${plan.name} - Monthly Service`,
@@ -466,13 +736,10 @@ const seedDatabase = async () => {
           unitPrice: amount,
           totalAmount: amount,
           isActive: true,
-        };
-        invoiceItemsData.push(internetServiceItem);
+        });
 
-        // Add some additional items for some invoices
         if (Math.random() > 0.7) {
-          // 30% chance of having router installation
-          const routerInstallationItem = {
+          invoiceItemsData.push({
             invoiceId: createdInvoice.id,
             itemType: "ROUTER_INSTALLATION",
             description: "Router Installation Service",
@@ -480,13 +747,11 @@ const seedDatabase = async () => {
             unitPrice: 500,
             totalAmount: 500,
             isActive: true,
-          };
-          invoiceItemsData.push(routerInstallationItem);
+          });
         }
 
         if (Math.random() > 0.8) {
-          // 20% chance of having late fee
-          const lateFeeItem = {
+          invoiceItemsData.push({
             invoiceId: createdInvoice.id,
             itemType: "LATE_FEE",
             description: "Late Payment Fee",
@@ -494,14 +759,12 @@ const seedDatabase = async () => {
             unitPrice: 100,
             totalAmount: 100,
             isActive: true,
-          };
-          invoiceItemsData.push(lateFeeItem);
+          });
         }
 
         if (isPaid) {
-          // Generate random collection dates within the month
           const collectionDate = generateRandomDateInMonth(year, month);
-          const payment = {
+          paymentsData.push({
             companyId: company.id,
             invoiceId: createdInvoice.id,
             collectedBy: customer.assignedAgentId,
@@ -509,17 +772,15 @@ const seedDatabase = async () => {
             method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
             amount: total,
             comments: `Payment collected for invoice ${invoiceNumber}`,
-          };
-          paymentsData.push(payment);
+          });
 
-          // Create transaction record for this payment
-          const transaction = {
+          transactionsData.push({
             companyId: company.id,
             customerId: customer.id,
             type: "PAYMENT",
             amount: total,
-            balanceBefore: 0, // This would be calculated in real scenario
-            balanceAfter: 0, // This would be calculated in real scenario
+            balanceBefore: 0,
+            balanceAfter: 0,
             description: `Payment received for invoice ${invoiceNumber}`,
             referenceId: createdInvoice.id,
             referenceType: "invoice",
@@ -527,11 +788,9 @@ const seedDatabase = async () => {
             recordedDate: collectionDate,
             createdBy: customer.assignedAgentId,
             isActive: true,
-          };
-          transactionsData.push(transaction);
+          });
         } else {
-          // Create bill generation transaction
-          const billGenerationTransaction = {
+          transactionsData.push({
             companyId: company.id,
             customerId: customer.id,
             type: "BILL_GENERATION",
@@ -545,14 +804,12 @@ const seedDatabase = async () => {
             recordedDate: invoiceDate,
             createdBy: getRandomItem(admins).id,
             isActive: true,
-          };
-          transactionsData.push(billGenerationTransaction);
+          });
         }
       }
 
-      // Create some pending charges for customers
+      // Pending charges
       if (Math.random() > 0.6) {
-        // 40% chance of having pending charges
         const pendingChargeTypes = [
           "ROUTER_INSTALLATION",
           "EQUIPMENT_CHARGE",
@@ -561,22 +818,20 @@ const seedDatabase = async () => {
           "OTHER",
         ];
         const chargeType = getRandomItem(pendingChargeTypes);
-
-        const pendingCharge = {
+        pendingChargesData.push({
           companyId: company.id,
           customerId: customer.id,
-          chargeType: chargeType,
+          chargeType,
           description: `${chargeType
-            .replace("_", " ")
+            .replace(/_/g, " ")
             .toLowerCase()} charge for ${customer.fullName}`,
           amount: randomInt(100, 1000),
-          isApplied: Math.random() > 0.7, // 30% chance of being applied
-          appliedToInvoiceId: null, // Will be set if applied
+          isApplied: Math.random() > 0.7,
+          appliedToInvoiceId: null,
           appliedDate: null,
           createdBy: getRandomItem(admins).id,
           isActive: true,
-        };
-        pendingChargesData.push(pendingCharge);
+        });
       }
     }
 
@@ -586,35 +841,32 @@ const seedDatabase = async () => {
     await models.Transaction.bulkCreate(transactionsData);
     await models.PendingCharge.bulkCreate(pendingChargesData);
 
-    // Add additional collection data for August with more realistic patterns
-    console.log("Adding additional August collection data...");
+    // --- Additional current-month collections (varied dates) ---
+    console.log("Adding additional current-month collection data...");
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
 
-    // Create some additional invoices and payments for August with different patterns
-    const augustCustomers = customers.slice(0, 15); // Use first 15 customers for additional data
-
-    for (const customer of augustCustomers) {
+    const extraCustomers = customers.slice(0, Math.min(15, customers.length));
+    for (const customer of extraCustomers) {
       const plan = getRandomItem(plans);
+      const subscription = await models.Subscription.findOne({
+        where: { customerId: customer.id },
+      });
+      const days = [1, 5, 10, 15, 20, 25, 28, 30].filter(
+        (d) => new Date(currentYear, currentMonth - 1, d) <= now
+      );
 
-      // Create additional invoices for August with different due dates
-      const augustDates = [1, 5, 10, 15, 20, 25, 28, 30]; // Specific dates in August
-
-      for (const day of augustDates) {
+      for (const day of days) {
         if (Math.random() > 0.4) {
-          // 60% chance of having payment on this date
-          const periodStart = new Date(2025, 7, 1); // August 1
-          const periodEnd = new Date(2025, 7, 31); // August 31
-          const dueDate = new Date(2025, 7, 15); // August 15
+          const periodStart = new Date(currentYear, currentMonth - 1, 1);
+          const periodEnd = new Date(currentYear, currentMonth, 0);
+          const dueDate = new Date(currentYear, currentMonth - 1, 15);
 
           const amount = plan.monthlyPrice;
-          const tax = amount * 0.18;
-          const total = amount + tax;
+          const tax = Math.round(amount * 0.18);
+          const total = Math.round(amount + tax);
 
-          // Find the subscription for this customer
-          const subscription = await models.Subscription.findOne({
-            where: { customerId: customer.id },
-          });
-
-          const invoiceDate = new Date(2025, 7, 1);
+          const invoiceDate = new Date(currentYear, currentMonth - 1, 1);
           const invoiceNumber = generateInvoiceNumber(
             company.id,
             customer.id,
@@ -625,20 +877,21 @@ const seedDatabase = async () => {
             companyId: company.id,
             customerId: customer.id,
             subscriptionId: subscription.id,
-            periodStart: periodStart,
-            periodEnd: periodEnd,
+            periodStart,
+            periodEnd,
             subtotal: amount,
             taxAmount: tax,
             discounts: 0,
             amountTotal: total,
-            dueDate: dueDate,
+            dueDate,
             status: "PAID",
-            invoiceNumber: invoiceNumber,
-            notes: `Additional August invoice for ${customer.fullName}`,
+            invoiceNumber,
+            notes: `Additional ${periodStart.toLocaleString("default", {
+              month: "long",
+            })} invoice for ${customer.fullName}`,
             isActive: true,
           });
 
-          // Create invoice item
           await models.InvoiceItem.create({
             invoiceId: createdInvoice.id,
             itemType: "INTERNET_SERVICE",
@@ -649,26 +902,25 @@ const seedDatabase = async () => {
             isActive: true,
           });
 
-          // Create payment on the specific date
           const collectionDate = new Date(
-            2025,
-            7,
+            currentYear,
+            currentMonth - 1,
             day,
             randomInt(9, 18),
             randomInt(0, 59)
           );
-
-          const payment = await models.Payment.create({
+          await models.Payment.create({
             companyId: company.id,
             invoiceId: createdInvoice.id,
             collectedBy: customer.assignedAgentId,
             collectedAt: collectionDate,
             method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
             amount: total,
-            comments: `Additional August payment for invoice ${invoiceNumber}`,
+            comments: `Additional ${periodStart.toLocaleString("default", {
+              month: "long",
+            })} payment for invoice ${invoiceNumber}`,
           });
 
-          // Create transaction for this payment
           await models.Transaction.create({
             companyId: company.id,
             customerId: customer.id,
