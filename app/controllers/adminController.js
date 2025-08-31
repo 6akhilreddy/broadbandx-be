@@ -15,6 +15,14 @@ exports.createAdmin = async (req, res) => {
       return res.status(500).json({ error: "Admin role not found" });
     }
 
+    // Handle unique fields - convert empty strings to null
+    if (email === "") {
+      email = null;
+    }
+    if (phone === "") {
+      phone = null;
+    }
+
     // Create admin user
     const user = await User.create({
       name,
@@ -82,9 +90,15 @@ exports.updateAdmin = async (req, res) => {
       include: [{ model: Role }],
     });
     if (!admin) return res.status(404).json({ error: "Admin not found" });
+
+    // Handle unique fields - convert empty strings to null
     if (name !== undefined) admin.name = name;
-    if (email !== undefined) admin.email = email;
-    if (phone !== undefined) admin.phone = phone;
+    if (email !== undefined) {
+      admin.email = email === "" ? null : email;
+    }
+    if (phone !== undefined) {
+      admin.phone = phone === "" ? null : phone;
+    }
     if (password !== undefined) admin.passwordHash = password;
     if (isActive !== undefined) admin.isActive = isActive;
     await admin.save();

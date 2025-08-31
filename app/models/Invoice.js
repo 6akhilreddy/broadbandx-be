@@ -15,10 +15,10 @@ const Invoice = sequelize.define(
     subscriptionId: { type: DataTypes.INTEGER, allowNull: false },
     periodStart: { type: DataTypes.DATEONLY },
     periodEnd: { type: DataTypes.DATEONLY },
-    amountDue: { type: DataTypes.FLOAT },
-    taxAmount: { type: DataTypes.FLOAT },
-    discounts: { type: DataTypes.FLOAT },
-    amountTotal: { type: DataTypes.FLOAT },
+    subtotal: { type: DataTypes.FLOAT, defaultValue: 0 },
+    taxAmount: { type: DataTypes.FLOAT, defaultValue: 0 },
+    discounts: { type: DataTypes.FLOAT, defaultValue: 0 },
+    amountTotal: { type: DataTypes.FLOAT, defaultValue: 0 },
     dueDate: { type: DataTypes.DATEONLY },
     status: {
       type: DataTypes.ENUM(
@@ -30,6 +30,10 @@ const Invoice = sequelize.define(
       ),
       defaultValue: "PENDING",
     },
+    invoiceNumber: { type: DataTypes.STRING, unique: true },
+    notes: { type: DataTypes.TEXT },
+    isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
+    manualOverrideBy: { type: DataTypes.INTEGER, allowNull: true },
   },
   {
     tableName: "invoices",

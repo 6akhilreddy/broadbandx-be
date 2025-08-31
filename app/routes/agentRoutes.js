@@ -305,7 +305,12 @@ router.get(
  *       400:
  *         description: Company ID is required as a query parameter
  */
-router.get("/:id", agentController.getAgentById);
+router.get(
+  "/:id",
+  ...requirePermission("agents.view"),
+  ...companyFilter,
+  agentController.getAgentById
+);
 
 /**
  * @swagger
@@ -385,7 +390,11 @@ router.get("/:id", agentController.getAgentById);
  *       400:
  *         description: Validation error or company ID is required as a query parameter
  */
-router.put("/:id", agentController.updateAgent);
+router.put(
+  "/:id",
+  ...requirePermissionWithCompany("agent.manage"),
+  agentController.updateAgent
+);
 
 /**
  * @swagger
@@ -418,6 +427,122 @@ router.put("/:id", agentController.updateAgent);
  *       400:
  *         description: Company ID is required as a query parameter
  */
-router.delete("/:id", agentController.deleteAgent);
+router.delete(
+  "/:id",
+  ...requirePermissionWithCompany("agent.manage"),
+  agentController.deleteAgent
+);
+
+/**
+ * @swagger
+ * /agents/{id}/payments:
+ *   get:
+ *     summary: Get payment history for a specific agent
+ *     description: |
+ *       Get all payments collected by a specific agent with pagination and filtering.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view payment history for any agent
+ *       - **ADMIN**: Can only view payment history for agents in their company
+ *
+ *       **Required Features:**
+ *       - `agents.view` feature permission required
+ *     tags: [Agents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of items per page
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter payments from this date (YYYY-MM-DD)
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter payments until this date (YYYY-MM-DD)
+ *     responses:
+ *       200:
+ *         description: Payment history with pagination
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 payments:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       amount:
+ *                         type: number
+ *                       paymentMethod:
+ *                         type: string
+ *                       collectedAt:
+ *                         type: string
+ *                         format: date-time
+ *                       status:
+ *                         type: string
+ *                       customer:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: integer
+ *                           name:
+ *                             type: string
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     currentPage:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
+ *                     totalItems:
+ *                       type: integer
+ *                     hasNext:
+ *                       type: boolean
+ *                     hasPrevious:
+ *                       type: boolean
+ *       404:
+ *         description: Agent not found
+ *       401:
+ *         description: Unauthorized
+ *       400:
+ *         description: Company ID is required as a query parameter
+ */
+router.get(
+  "/:id/payments",
+  ...requirePermission("agents.view"),
+  ...companyFilter,
+  agentController.getAgentPaymentHistory
+);
 
 module.exports = router;

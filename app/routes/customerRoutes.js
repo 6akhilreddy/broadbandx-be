@@ -882,4 +882,154 @@ router.delete(
 // Test route
 router.get("/test/data", customerController.testCustomerData);
 
+/**
+ * @swagger
+ * /customers/{customerId}/pending-charge:
+ *   post:
+ *     summary: Add a pending charge to a customer
+ *     description: |
+ *       Add a one-time charge that will be applied to the customer's next invoice.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can add pending charges to any customer
+ *       - **ADMIN/AGENT**: Can only add pending charges to customers from their own company
+ *
+ *       **Required Features:**
+ *       - `customer.pending-charge.add` feature permission required
+ *     tags: [Customers]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: customerId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Customer ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [chargeType, description, amount]
+ *             properties:
+ *               chargeType:
+ *                 type: string
+ *                 enum: [ROUTER_INSTALLATION, EQUIPMENT_CHARGE, LATE_FEE, ADJUSTMENT, OTHER]
+ *                 description: Type of charge
+ *               description:
+ *                 type: string
+ *                 description: Description of the charge
+ *               amount:
+ *                 type: number
+ *                 description: Amount to be charged
+ *           example:
+ *             chargeType: "ROUTER_INSTALLATION"
+ *             description: "Router installation with setup"
+ *             amount: 2000
+ *     responses:
+ *       201:
+ *         description: Pending charge added successfully
+ *       404:
+ *         description: Customer not found
+ */
+router.post(
+  "/:customerId/pending-charge",
+  ...requirePermissionWithCompany("customer.pending-charge.add"),
+  customerController.addPendingCharge
+);
+
+/**
+ * @swagger
+ * /customers/{customerId}/balance-history:
+ *   get:
+ *     summary: Get customer balance history
+ *     description: |
+ *       Get complete transaction history and balance information for a customer.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view balance history for any customer
+ *       - **ADMIN/AGENT**: Can only view balance history for customers from their own company
+ *
+ *       **Required Features:**
+ *       - `customer.balance-history.view` feature permission required
+ *     tags: [Customers]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: customerId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Customer ID
+ *     responses:
+ *       200:
+ *         description: Customer balance history with transactions and pending charges
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     transactions:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: integer
+ *                           type:
+ *                             type: string
+ *                             enum: [PAYMENT, BILL_GENERATION, BALANCE_ADJUSTMENT, PENDING_CHARGE_ADDED, PENDING_CHARGE_APPLIED]
+ *                           amount:
+ *                             type: number
+ *                           balanceBefore:
+ *                             type: number
+ *                           balanceAfter:
+ *                             type: number
+ *                           description:
+ *                             type: string
+ *                           transactionDate:
+ *                             type: string
+ *                             format: date-time
+ *                           recordedDate:
+ *                             type: string
+ *                             format: date-time
+ *                     pendingCharges:
+ *                       type: object
+ *                       properties:
+ *                         totalAmount:
+ *                             type: number
+ *                         charges:
+ *                             type: array
+ *                             items:
+ *                               type: object
+ *                               properties:
+ *                                 id:
+ *                                   type: integer
+ *                                 chargeType:
+ *                                   type: string
+ *                                 description:
+ *                                   type: string
+ *                                 amount:
+ *                                   type: number
+ *                                 isApplied:
+ *                                   type: boolean
+ *                     currentBalance:
+ *                       type: number
+ *       404:
+ *         description: Customer not found
+ */
+router.get(
+  "/:customerId/balance-history",
+  ...requirePermissionWithCompany("customer.balance-history.view"),
+  customerController.getCustomerBalanceHistory
+);
+
 module.exports = router;

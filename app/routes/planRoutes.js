@@ -294,7 +294,12 @@ router.get(
  *       404:
  *         description: Plan not found
  */
-router.get("/:id", planController.getPlanById);
+router.get(
+  "/:id",
+  ...requirePermission("plans.view"),
+  ...companyFilter,
+  planController.getPlanById
+);
 
 /**
  * @swagger
@@ -374,7 +379,11 @@ router.get("/:id", planController.getPlanById);
  *       404:
  *         description: Plan not found
  */
-router.put("/:id", planController.updatePlan);
+router.put(
+  "/:id",
+  ...requirePermissionWithCompany("plan.manage"),
+  planController.updatePlan
+);
 
 /**
  * @swagger
@@ -395,6 +404,10 @@ router.put("/:id", planController.updatePlan);
  *       404:
  *         description: Plan not found
  */
-router.delete("/:id", planController.deletePlan);
+router.delete(
+  "/:id",
+  ...requirePermissionWithCompany("plan.manage"),
+  planController.deletePlan
+);
 
 module.exports = router;

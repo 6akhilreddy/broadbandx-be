@@ -1,16 +1,4 @@
 const { DataTypes } = require("sequelize");
-const Company = require("../models/Company");
-const User = require("../models/User");
-const Plan = require("../models/Plan");
-const Customer = require("../models/Customer");
-const CustomerHardware = require("../models/CustomerHardware");
-const Subscription = require("../models/Subscription");
-const Invoice = require("../models/Invoice");
-const Payment = require("../models/Payment");
-const Feature = require("../models/Feature");
-const Role = require("../models/Role");
-const RolePermission = require("../models/RolePermission");
-const Area = require("../models/Area");
 
 // This function defines all the relationships between the models in the application.
 const defineAssociations = (models = null) => {
@@ -19,13 +7,20 @@ const defineAssociations = (models = null) => {
   const User = models?.User || require("../models/User");
   const Plan = models?.Plan || require("../models/Plan");
   const Customer = models?.Customer || require("../models/Customer");
-  const CustomerHardware = models?.CustomerHardware || require("../models/CustomerHardware");
-  const Subscription = models?.Subscription || require("../models/Subscription");
+  const CustomerHardware =
+    models?.CustomerHardware || require("../models/CustomerHardware");
+  const Subscription =
+    models?.Subscription || require("../models/Subscription");
   const Invoice = models?.Invoice || require("../models/Invoice");
+  const InvoiceItem = models?.InvoiceItem || require("../models/InvoiceItem");
   const Payment = models?.Payment || require("../models/Payment");
+  const Transaction = models?.Transaction || require("../models/Transaction");
+  const PendingCharge =
+    models?.PendingCharge || require("../models/PendingCharge");
   const Feature = models?.Feature || require("../models/Feature");
   const Role = models?.Role || require("../models/Role");
-  const RolePermission = models?.RolePermission || require("../models/RolePermission");
+  const RolePermission =
+    models?.RolePermission || require("../models/RolePermission");
   const Area = models?.Area || require("../models/Area");
   // 🔹 Area Associations 🔹
   // Area belongs to Company and User (createdBy)
@@ -71,7 +66,7 @@ const defineAssociations = (models = null) => {
     onDelete: "RESTRICT", // Prevent deleting a user who has collected payments
   });
   Payment.belongsTo(User, {
-    as: "CollectedBy",
+    as: "collector",
     foreignKey: "collectedBy",
   });
 
@@ -155,6 +150,63 @@ const defineAssociations = (models = null) => {
   // 🔹 Invoice and Payment Associations 🔹
   Invoice.hasMany(Payment, { foreignKey: "invoiceId", onDelete: "CASCADE" });
   Payment.belongsTo(Invoice, { foreignKey: "invoiceId" });
+
+  // 🔹 Invoice and InvoiceItem Associations 🔹
+  Invoice.hasMany(InvoiceItem, {
+    foreignKey: "invoiceId",
+    onDelete: "CASCADE",
+  });
+  InvoiceItem.belongsTo(Invoice, { foreignKey: "invoiceId" });
+
+  // 🔹 Customer and Transaction Associations 🔹
+  Customer.hasMany(Transaction, {
+    foreignKey: "customerId",
+    onDelete: "CASCADE",
+  });
+  Transaction.belongsTo(Customer, { foreignKey: "customerId" });
+
+  // 🔹 Customer and PendingCharge Associations 🔹
+  Customer.hasMany(PendingCharge, {
+    foreignKey: "customerId",
+    onDelete: "CASCADE",
+  });
+  PendingCharge.belongsTo(Customer, { foreignKey: "customerId" });
+
+  // 🔹 Company and Transaction Associations 🔹
+  Company.hasMany(Transaction, {
+    foreignKey: "companyId",
+    onDelete: "CASCADE",
+  });
+  Transaction.belongsTo(Company, { foreignKey: "companyId" });
+
+  // 🔹 Company and PendingCharge Associations 🔹
+  Company.hasMany(PendingCharge, {
+    foreignKey: "companyId",
+    onDelete: "CASCADE",
+  });
+  PendingCharge.belongsTo(Company, { foreignKey: "companyId" });
+
+  // 🔹 User and Transaction Associations 🔹
+  User.hasMany(Transaction, {
+    foreignKey: "createdBy",
+    as: "CreatedTransactions",
+    onDelete: "RESTRICT",
+  });
+  Transaction.belongsTo(User, {
+    as: "CreatedBy",
+    foreignKey: "createdBy",
+  });
+
+  // 🔹 User and PendingCharge Associations 🔹
+  User.hasMany(PendingCharge, {
+    foreignKey: "createdBy",
+    as: "CreatedPendingCharges",
+    onDelete: "RESTRICT",
+  });
+  PendingCharge.belongsTo(User, {
+    as: "CreatedBy",
+    foreignKey: "createdBy",
+  });
 };
 
 module.exports = defineAssociations;

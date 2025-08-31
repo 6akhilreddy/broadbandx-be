@@ -10,6 +10,13 @@ const companyRoutes = require("./app/routes/companyRoutes");
 const customerRoutes = require("./app/routes/customerRoutes");
 const planRoutes = require("./app/routes/planRoutes");
 const agentRoutes = require("./app/routes/agentRoutes");
+const areaRoutes = require("./app/routes/areaRoutes");
+const collectionRoutes = require("./app/routes/collectionRoutes");
+const paymentRoutes = require("./app/routes/paymentRoutes");
+const reportRoutes = require("./app/routes/reportRoutes");
+const dashboardRoutes = require("./app/routes/dashboardRoutes");
+const transactionRoutes = require("./app/routes/transactionRoutes");
+const pendingChargeRoutes = require("./app/routes/pendingChargeRoutes");
 const { swaggerUi, swaggerSpec } = require("./app/config/swagger");
 
 // Initialize Express app
@@ -37,6 +44,13 @@ app.use("/api/companies", companyRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api/agents", agentRoutes);
+app.use("/api/areas", areaRoutes);
+app.use("/api/collection", collectionRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/transactions", transactionRoutes);
+app.use("/api/pending-charges", pendingChargeRoutes);
 
 // Start server
 const PORT = process.env.PORT || 3000;

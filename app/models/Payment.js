@@ -13,9 +13,12 @@ const Payment = sequelize.define(
     companyId: { type: DataTypes.INTEGER, allowNull: false },
     invoiceId: { type: DataTypes.INTEGER, allowNull: false },
     collectedBy: { type: DataTypes.INTEGER, allowNull: false },
-    collectedAt: { type: DataTypes.DATE },
+    collectedAt: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW,
+    },
     method: {
-      type: DataTypes.ENUM("UPI", "CASH"),
+      type: DataTypes.ENUM("UPI", "CASH", "BHIM", "PhonePe", "CARD"),
       allowNull: false,
     },
     amount: { type: DataTypes.FLOAT },

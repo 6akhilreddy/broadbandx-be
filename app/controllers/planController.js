@@ -4,8 +4,11 @@ const { Op } = require("sequelize");
 // Create Plan
 exports.createPlan = async (req, res) => {
   try {
-    const { companyId, name, monthlyPrice, gstRate, code, benefits, isActive } =
-      req.body;
+    const { name, monthlyPrice, gstRate, code, benefits, isActive } = req.body;
+
+    // Use companyId from JWT token (set by middleware)
+    const companyId = req.userCompanyId;
+
     const plan = await Plan.create({
       companyId,
       name,
@@ -24,11 +27,10 @@ exports.createPlan = async (req, res) => {
 // Get all Plans with filtering
 exports.getAllPlans = async (req, res) => {
   try {
-    const { search = "", isActive = "", companyId } = req.query;
+    const { search = "", isActive = "" } = req.query;
 
-    if (!companyId) {
-      return res.status(400).json({ error: "Company ID is required" });
-    }
+    // Use companyId from JWT token (set by middleware)
+    const companyId = req.userCompanyId;
 
     const whereClause = { companyId };
 
@@ -59,10 +61,8 @@ exports.getAllPlans = async (req, res) => {
 // Get Plan by ID
 exports.getPlanById = async (req, res) => {
   try {
-    const { companyId } = req.query;
-    if (!companyId) {
-      return res.status(400).json({ error: "Company ID is required" });
-    }
+    // Use companyId from JWT token (set by middleware)
+    const companyId = req.userCompanyId;
 
     const plan = await Plan.findOne({
       where: { id: req.params.id, companyId },
@@ -77,12 +77,10 @@ exports.getPlanById = async (req, res) => {
 // Update Plan
 exports.updatePlan = async (req, res) => {
   try {
-    const { companyId, name, monthlyPrice, gstRate, code, benefits, isActive } =
-      req.body;
+    const { name, monthlyPrice, gstRate, code, benefits, isActive } = req.body;
 
-    if (!companyId) {
-      return res.status(400).json({ error: "Company ID is required" });
-    }
+    // Use companyId from JWT token (set by middleware)
+    const companyId = req.userCompanyId;
 
     const [updated] = await Plan.update(
       { name, monthlyPrice, gstRate, code, benefits, isActive },
@@ -101,10 +99,8 @@ exports.updatePlan = async (req, res) => {
 // Delete Plan
 exports.deletePlan = async (req, res) => {
   try {
-    const { companyId } = req.query;
-    if (!companyId) {
-      return res.status(400).json({ error: "Company ID is required" });
-    }
+    // Use companyId from JWT token (set by middleware)
+    const companyId = req.userCompanyId;
 
     const deleted = await Plan.destroy({
       where: { id: req.params.id, companyId },

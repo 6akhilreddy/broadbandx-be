@@ -11,7 +11,10 @@ const models = {
   CustomerHardware: require("../models/CustomerHardware"),
   Subscription: require("../models/Subscription"),
   Invoice: require("../models/Invoice"),
+  InvoiceItem: require("../models/InvoiceItem"),
   Payment: require("../models/Payment"),
+  Transaction: require("../models/Transaction"),
+  PendingCharge: require("../models/PendingCharge"),
   Feature: require("../models/Feature"),
   Role: require("../models/Role"),
   RolePermission: require("../models/RolePermission"),
@@ -71,6 +74,27 @@ const deviceTypes = [
 
 const generateMAC = () =>
   `00:1B:44:${randomInt(11, 99)}:${randomInt(11, 99)}:${randomInt(11, 99)}`;
+
+// Generate random date within a specific month
+const generateRandomDateInMonth = (year, month) => {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const randomDay = randomInt(1, daysInMonth);
+  const randomHour = randomInt(9, 18); // Business hours
+  const randomMinute = randomInt(0, 59);
+
+  return new Date(year, month - 1, randomDay, randomHour, randomMinute);
+};
+
+// Generate unique invoice number
+const generateInvoiceNumber = (companyId, customerId, date) => {
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, "0");
+  const day = date.getDate().toString().padStart(2, "0");
+  return `INV-${companyId}-${customerId}-${year}${month}${day}-${randomInt(
+    1000,
+    9999
+  )}`;
+};
 
 const seedDatabase = async () => {
   try {
@@ -333,7 +357,7 @@ const seedDatabase = async () => {
 
     // --- 7. Create Customers and related data in a loop ---
     console.log(
-      "Seeding Customers, Subscriptions, Hardware, Invoices, and Payments..."
+      "Seeding Customers, Subscriptions, Hardware, Invoices, InvoiceItems, Payments, Transactions, and PendingCharges..."
     );
     const customersData = [];
     for (let i = 1; i <= 30; i++) {
@@ -360,7 +384,12 @@ const seedDatabase = async () => {
 
     const hardwareData = [];
     const paymentsData = [];
+    const invoicesData = [];
+    const invoiceItemsData = [];
+    const transactionsData = [];
+    const pendingChargesData = [];
 
+    // Create hardware for customers
     for (const customer of customers) {
       hardwareData.push({
         customerId: customer.id,
@@ -373,7 +402,10 @@ const seedDatabase = async () => {
           deviceType: getRandomItem(deviceTypes),
           macAddress: generateMAC(),
         });
+    }
 
+    // Create subscriptions and invoices for customers
+    for (const customer of customers) {
       const plan = getRandomItem(plans);
       const createdSub = await models.Subscription.create({
         companyId: company.id,
@@ -382,23 +414,37 @@ const seedDatabase = async () => {
         startDate: new Date(),
       });
 
-      const invoiceCount = randomInt(1, 3);
-      for (let j = 0; j < invoiceCount; j++) {
+      // Create invoices for the last 3 months
+      const months = [6, 7, 8]; // June, July, August
+      for (const month of months) {
+        const year = 2025;
+        const periodStart = new Date(year, month - 1, 1);
+        const periodEnd = new Date(year, month, 0);
+        const dueDate = new Date(year, month - 1, 15);
+
         const amount = plan.monthlyPrice;
         const tax = amount * 0.18;
         const total = amount + tax;
-        const dueDate = new Date();
-        dueDate.setDate(dueDate.getDate() + 15 - j * 30);
+
+        // 70% chance of being paid
         const isPaid = Math.random() > 0.3;
+
+        const invoiceDate = new Date(year, month - 1, 1);
+        const invoiceNumber = generateInvoiceNumber(
+          company.id,
+          customer.id,
+          invoiceDate
+        );
 
         const createdInvoice = await models.Invoice.create({
           companyId: company.id,
           customerId: customer.id,
           subscriptionId: createdSub.id,
-          periodStart: new Date(),
-          periodEnd: new Date(),
-          amountDue: amount,
+          periodStart: periodStart,
+          periodEnd: periodEnd,
+          subtotal: amount,
           taxAmount: tax,
+          discounts: 0,
           amountTotal: total,
           dueDate: dueDate,
           status: isPaid
@@ -406,23 +452,241 @@ const seedDatabase = async () => {
             : dueDate < new Date()
             ? "OVERDUE"
             : "PENDING",
+          invoiceNumber: invoiceNumber,
+          notes: `Monthly internet service for ${periodStart.toLocaleDateString()} - ${periodEnd.toLocaleDateString()}`,
+          isActive: true,
         });
 
+        // Create invoice items for this invoice
+        const internetServiceItem = {
+          invoiceId: createdInvoice.id,
+          itemType: "INTERNET_SERVICE",
+          description: `${plan.name} - Monthly Service`,
+          quantity: 1,
+          unitPrice: amount,
+          totalAmount: amount,
+          isActive: true,
+        };
+        invoiceItemsData.push(internetServiceItem);
+
+        // Add some additional items for some invoices
+        if (Math.random() > 0.7) {
+          // 30% chance of having router installation
+          const routerInstallationItem = {
+            invoiceId: createdInvoice.id,
+            itemType: "ROUTER_INSTALLATION",
+            description: "Router Installation Service",
+            quantity: 1,
+            unitPrice: 500,
+            totalAmount: 500,
+            isActive: true,
+          };
+          invoiceItemsData.push(routerInstallationItem);
+        }
+
+        if (Math.random() > 0.8) {
+          // 20% chance of having late fee
+          const lateFeeItem = {
+            invoiceId: createdInvoice.id,
+            itemType: "LATE_FEE",
+            description: "Late Payment Fee",
+            quantity: 1,
+            unitPrice: 100,
+            totalAmount: 100,
+            isActive: true,
+          };
+          invoiceItemsData.push(lateFeeItem);
+        }
+
         if (isPaid) {
-          paymentsData.push({
+          // Generate random collection dates within the month
+          const collectionDate = generateRandomDateInMonth(year, month);
+          const payment = {
             companyId: company.id,
             invoiceId: createdInvoice.id,
             collectedBy: customer.assignedAgentId,
-            collectedAt: new Date(),
-            method: getRandomItem(["UPI", "CASH"]),
+            collectedAt: collectionDate,
+            method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
             amount: total,
-          });
+            comments: `Payment collected for invoice ${invoiceNumber}`,
+          };
+          paymentsData.push(payment);
+
+          // Create transaction record for this payment
+          const transaction = {
+            companyId: company.id,
+            customerId: customer.id,
+            type: "PAYMENT",
+            amount: total,
+            balanceBefore: 0, // This would be calculated in real scenario
+            balanceAfter: 0, // This would be calculated in real scenario
+            description: `Payment received for invoice ${invoiceNumber}`,
+            referenceId: createdInvoice.id,
+            referenceType: "invoice",
+            transactionDate: collectionDate,
+            recordedDate: collectionDate,
+            createdBy: customer.assignedAgentId,
+            isActive: true,
+          };
+          transactionsData.push(transaction);
+        } else {
+          // Create bill generation transaction
+          const billGenerationTransaction = {
+            companyId: company.id,
+            customerId: customer.id,
+            type: "BILL_GENERATION",
+            amount: total,
+            balanceBefore: 0,
+            balanceAfter: total,
+            description: `Bill generated for invoice ${invoiceNumber}`,
+            referenceId: createdInvoice.id,
+            referenceType: "invoice",
+            transactionDate: invoiceDate,
+            recordedDate: invoiceDate,
+            createdBy: getRandomItem(admins).id,
+            isActive: true,
+          };
+          transactionsData.push(billGenerationTransaction);
         }
+      }
+
+      // Create some pending charges for customers
+      if (Math.random() > 0.6) {
+        // 40% chance of having pending charges
+        const pendingChargeTypes = [
+          "ROUTER_INSTALLATION",
+          "EQUIPMENT_CHARGE",
+          "LATE_FEE",
+          "ADJUSTMENT",
+          "OTHER",
+        ];
+        const chargeType = getRandomItem(pendingChargeTypes);
+
+        const pendingCharge = {
+          companyId: company.id,
+          customerId: customer.id,
+          chargeType: chargeType,
+          description: `${chargeType
+            .replace("_", " ")
+            .toLowerCase()} charge for ${customer.fullName}`,
+          amount: randomInt(100, 1000),
+          isApplied: Math.random() > 0.7, // 30% chance of being applied
+          appliedToInvoiceId: null, // Will be set if applied
+          appliedDate: null,
+          createdBy: getRandomItem(admins).id,
+          isActive: true,
+        };
+        pendingChargesData.push(pendingCharge);
       }
     }
 
     await models.CustomerHardware.bulkCreate(hardwareData);
+    await models.InvoiceItem.bulkCreate(invoiceItemsData);
     await models.Payment.bulkCreate(paymentsData);
+    await models.Transaction.bulkCreate(transactionsData);
+    await models.PendingCharge.bulkCreate(pendingChargesData);
+
+    // Add additional collection data for August with more realistic patterns
+    console.log("Adding additional August collection data...");
+
+    // Create some additional invoices and payments for August with different patterns
+    const augustCustomers = customers.slice(0, 15); // Use first 15 customers for additional data
+
+    for (const customer of augustCustomers) {
+      const plan = getRandomItem(plans);
+
+      // Create additional invoices for August with different due dates
+      const augustDates = [1, 5, 10, 15, 20, 25, 28, 30]; // Specific dates in August
+
+      for (const day of augustDates) {
+        if (Math.random() > 0.4) {
+          // 60% chance of having payment on this date
+          const periodStart = new Date(2025, 7, 1); // August 1
+          const periodEnd = new Date(2025, 7, 31); // August 31
+          const dueDate = new Date(2025, 7, 15); // August 15
+
+          const amount = plan.monthlyPrice;
+          const tax = amount * 0.18;
+          const total = amount + tax;
+
+          // Find the subscription for this customer
+          const subscription = await models.Subscription.findOne({
+            where: { customerId: customer.id },
+          });
+
+          const invoiceDate = new Date(2025, 7, 1);
+          const invoiceNumber = generateInvoiceNumber(
+            company.id,
+            customer.id,
+            invoiceDate
+          );
+
+          const createdInvoice = await models.Invoice.create({
+            companyId: company.id,
+            customerId: customer.id,
+            subscriptionId: subscription.id,
+            periodStart: periodStart,
+            periodEnd: periodEnd,
+            subtotal: amount,
+            taxAmount: tax,
+            discounts: 0,
+            amountTotal: total,
+            dueDate: dueDate,
+            status: "PAID",
+            invoiceNumber: invoiceNumber,
+            notes: `Additional August invoice for ${customer.fullName}`,
+            isActive: true,
+          });
+
+          // Create invoice item
+          await models.InvoiceItem.create({
+            invoiceId: createdInvoice.id,
+            itemType: "INTERNET_SERVICE",
+            description: `${plan.name} - Monthly Service`,
+            quantity: 1,
+            unitPrice: amount,
+            totalAmount: amount,
+            isActive: true,
+          });
+
+          // Create payment on the specific date
+          const collectionDate = new Date(
+            2025,
+            7,
+            day,
+            randomInt(9, 18),
+            randomInt(0, 59)
+          );
+
+          const payment = await models.Payment.create({
+            companyId: company.id,
+            invoiceId: createdInvoice.id,
+            collectedBy: customer.assignedAgentId,
+            collectedAt: collectionDate,
+            method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
+            amount: total,
+            comments: `Additional August payment for invoice ${invoiceNumber}`,
+          });
+
+          // Create transaction for this payment
+          await models.Transaction.create({
+            companyId: company.id,
+            customerId: customer.id,
+            type: "PAYMENT",
+            amount: total,
+            balanceBefore: 0,
+            balanceAfter: 0,
+            description: `Payment received for invoice ${invoiceNumber}`,
+            referenceId: createdInvoice.id,
+            referenceType: "invoice",
+            transactionDate: collectionDate,
+            recordedDate: collectionDate,
+            createdBy: customer.assignedAgentId,
+            isActive: true,
+          });
+        }
+      }
+    }
 
     console.log("All data seeded.");
     console.log("\n✅ Database seeding completed successfully!");
