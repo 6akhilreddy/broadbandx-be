@@ -545,4 +545,285 @@ router.get(
   agentController.getAgentPaymentHistory
 );
 
+/**
+ * @swagger
+ * /agents/{id}/monthly-trend:
+ *   get:
+ *     summary: Get monthly collection trend for a specific agent
+ *     description: |
+ *       Get monthly collection trend for the last 12 months for a specific agent.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view monthly trend for any agent
+ *       - **ADMIN**: Can only view monthly trend for agents in their company
+ *
+ *       **Required Features:**
+ *       - `agents.view` feature permission required
+ *     tags: [Agents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
+ *     responses:
+ *       200:
+ *         description: Monthly collection trend data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 monthlyTrend:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       month:
+ *                         type: string
+ *                       amount:
+ *                         type: number
+ *       404:
+ *         description: Agent not found
+ *       401:
+ *         description: Unauthorized
+ */
+router.get(
+  "/:id/monthly-trend",
+  ...requirePermission("agents.view"),
+  ...companyFilter,
+  agentController.getAgentMonthlyTrend
+);
+
+/**
+ * @swagger
+ * /agents/{id}/areas-permissions:
+ *   get:
+ *     summary: Get agent areas and permissions
+ *     description: |
+ *       Get assigned areas and permissions for a specific agent.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can view areas and permissions for any agent
+ *       - **ADMIN**: Can only view areas and permissions for agents in their company
+ *
+ *       **Required Features:**
+ *       - `agents.view` feature permission required
+ *     tags: [Agents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
+ *     responses:
+ *       200:
+ *         description: Agent areas and permissions data
+ *       404:
+ *         description: Agent not found
+ *       401:
+ *         description: Unauthorized
+ */
+router.get(
+  "/:id/areas-permissions",
+  ...requirePermission("agents.view"),
+  ...companyFilter,
+  agentController.getAgentAreasAndPermissions
+);
+
+/**
+ * @swagger
+ * /agents/{id}/areas-permissions:
+ *   put:
+ *     summary: Update agent areas and permissions
+ *     description: |
+ *       Update assigned areas and permissions for a specific agent.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can update areas and permissions for any agent
+ *       - **ADMIN**: Can only update areas and permissions for agents in their company
+ *
+ *       **Required Features:**
+ *       - `agent.manage` feature permission required
+ *     tags: [Agents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               assignedAreas:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *                 description: Array of area IDs assigned to the agent
+ *               agentPermissions:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of permission codes for the agent
+ *     responses:
+ *       200:
+ *         description: Agent areas and permissions updated
+ *       404:
+ *         description: Agent not found
+ *       400:
+ *         description: Invalid areas or permissions
+ *       401:
+ *         description: Unauthorized
+ */
+router.put(
+  "/:id/areas-permissions",
+  ...requirePermissionWithCompany("agent.manage"),
+  agentController.updateAgentAreasAndPermissions
+);
+
+/**
+ * @swagger
+ * /agents/{id}/areas:
+ *   put:
+ *     summary: Update agent areas only
+ *     description: |
+ *       Update assigned areas for a specific agent.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can update areas for any agent
+ *       - **ADMIN**: Can only update areas for agents in their company
+ *
+ *       **Required Features:**
+ *       - `agent.manage` feature permission required
+ *     tags: [Agents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               assignedAreas:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *                 description: Array of area IDs assigned to the agent
+ *     responses:
+ *       200:
+ *         description: Agent areas updated
+ *       404:
+ *         description: Agent not found
+ *       400:
+ *         description: Invalid areas
+ *       401:
+ *         description: Unauthorized
+ */
+router.put(
+  "/:id/areas",
+  ...requirePermissionWithCompany("agent.manage"),
+  agentController.updateAgentAreas
+);
+
+/**
+ * @swagger
+ * /agents/{id}/permissions:
+ *   put:
+ *     summary: Update agent permissions only
+ *     description: |
+ *       Update permissions for a specific agent.
+ *
+ *       **Access Control:**
+ *       - **SUPER_ADMIN**: Can update permissions for any agent
+ *       - **ADMIN**: Can only update permissions for agents in their company
+ *
+ *       **Required Features:**
+ *       - `agent.manage` feature permission required
+ *     tags: [Agents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Agent ID
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: The ID of the company the agent belongs to
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               agentPermissions:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of permission codes for the agent
+ *     responses:
+ *       200:
+ *         description: Agent permissions updated
+ *       404:
+ *         description: Agent not found
+ *       401:
+ *         description: Unauthorized
+ */
+router.put(
+  "/:id/permissions",
+  ...requirePermissionWithCompany("agent.manage"),
+  agentController.updateAgentPermissions
+);
+
 module.exports = router;

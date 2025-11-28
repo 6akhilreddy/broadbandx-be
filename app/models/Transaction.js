@@ -14,12 +14,15 @@ const Transaction = sequelize.define(
     customerId: { type: DataTypes.INTEGER, allowNull: false },
     type: {
       type: DataTypes.ENUM(
-        "PAYMENT",
-        "BILL_GENERATION",
+        "INVOICE",
+        "ADD_ON_BILL",
         "BALANCE_ADJUSTMENT",
-        "PENDING_CHARGE_ADDED",
-        "PENDING_CHARGE_APPLIED"
+        "PAYMENT"
       ),
+      allowNull: false,
+    },
+    direction: {
+      type: DataTypes.ENUM("DEBIT", "CREDIT"),
       allowNull: false,
     },
     amount: { type: DataTypes.FLOAT, allowNull: false },
@@ -27,7 +30,7 @@ const Transaction = sequelize.define(
     balanceAfter: { type: DataTypes.FLOAT, allowNull: false },
     description: { type: DataTypes.TEXT },
     referenceId: { type: DataTypes.INTEGER }, // invoiceId, paymentId, etc.
-    referenceType: { type: DataTypes.STRING }, // 'invoice', 'payment', 'pending_charge'
+    referenceType: { type: DataTypes.STRING }, // 'invoice', 'payment', null
     transactionDate: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,

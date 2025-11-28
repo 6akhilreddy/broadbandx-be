@@ -21,4 +21,10 @@ router.post("/record", paymentController.recordPayment);
 // Get payment history
 router.get("/history", paymentController.getPaymentHistory);
 
+// Get payment details for preview
+router.get("/:paymentId", paymentController.getPaymentDetails);
+
+// Delete payment
+router.delete("/:paymentId", paymentController.deletePayment);
+
 module.exports = router;

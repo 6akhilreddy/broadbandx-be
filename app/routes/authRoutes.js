@@ -1,5 +1,10 @@
 const express = require("express");
-const { login } = require("../controllers/authController");
+const {
+  login,
+  loginAsAgent,
+  exitImpersonation,
+} = require("../controllers/authController");
+const { authenticate } = require("../middlewares/authMiddleware");
 const router = express.Router();
 
 /**
@@ -130,5 +135,11 @@ const router = express.Router();
  *                   example: "Invalid phone or password."
  */
 router.post("/login", login);
+
+// Admin login as agent (impersonation) - requires authentication
+router.post("/login-as-agent/:agentId", authenticate, loginAsAgent);
+
+// Exit impersonation - requires authentication
+router.post("/exit-impersonation", authenticate, exitImpersonation);
 
 module.exports = router;

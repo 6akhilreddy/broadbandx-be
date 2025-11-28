@@ -10,30 +10,29 @@ const Invoice = sequelize.define(
       allowNull: false,
       autoIncrement: true,
     },
+    transactionId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      unique: true,
+    },
+    invoiceNumber: { type: DataTypes.STRING, unique: true, allowNull: false },
+    type: {
+      type: DataTypes.ENUM("SUBSCRIPTION", "ADJUSTED"),
+      allowNull: false,
+    },
     companyId: { type: DataTypes.INTEGER, allowNull: false },
     customerId: { type: DataTypes.INTEGER, allowNull: false },
-    subscriptionId: { type: DataTypes.INTEGER, allowNull: false },
-    periodStart: { type: DataTypes.DATEONLY },
-    periodEnd: { type: DataTypes.DATEONLY },
+    subscriptionId: { type: DataTypes.INTEGER, allowNull: true }, // Only for SUBSCRIPTION type
+    periodStart: { type: DataTypes.DATEONLY, allowNull: true }, // Only for SUBSCRIPTION type
+    periodEnd: { type: DataTypes.DATEONLY, allowNull: true }, // Only for SUBSCRIPTION type
     subtotal: { type: DataTypes.FLOAT, defaultValue: 0 },
     taxAmount: { type: DataTypes.FLOAT, defaultValue: 0 },
     discounts: { type: DataTypes.FLOAT, defaultValue: 0 },
     amountTotal: { type: DataTypes.FLOAT, defaultValue: 0 },
+    prevBalance: { type: DataTypes.FLOAT, allowNull: true }, // Only for SUBSCRIPTION with prev balance
+    items: { type: DataTypes.JSONB, allowNull: true }, // Array of invoice items
     dueDate: { type: DataTypes.DATEONLY },
-    status: {
-      type: DataTypes.ENUM(
-        "PENDING",
-        "PAID",
-        "PARTIALLY_PAID",
-        "OVERDUE",
-        "CANCELLED"
-      ),
-      defaultValue: "PENDING",
-    },
-    invoiceNumber: { type: DataTypes.STRING, unique: true },
-    notes: { type: DataTypes.TEXT },
     isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
-    manualOverrideBy: { type: DataTypes.INTEGER, allowNull: true },
   },
   {
     tableName: "invoices",

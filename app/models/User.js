@@ -18,6 +18,16 @@ const User = sequelize.define(
     passwordHash: { type: DataTypes.STRING, allowNull: false },
     roleId: { type: DataTypes.INTEGER, allowNull: false },
     isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
+    assignedAreas: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: [],
+    },
+    agentPermissions: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: [],
+    },
   },
   {
     tableName: "users",

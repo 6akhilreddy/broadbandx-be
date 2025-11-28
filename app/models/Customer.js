@@ -27,6 +27,8 @@ const Customer = sequelize.define(
     gstNumber: { type: DataTypes.STRING },
     advance: { type: DataTypes.INTEGER },
     remarks: { type: DataTypes.TEXT },
+    followUpDate: { type: DataTypes.DATEONLY, allowNull: true },
+    followUpNotes: { type: DataTypes.TEXT, allowNull: true },
     createdBy: { type: DataTypes.INTEGER, allowNull: false },
     isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
   },

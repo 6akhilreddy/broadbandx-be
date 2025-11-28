@@ -1,9 +1,15 @@
 const { Op } = require("sequelize");
+const sequelize = require("../config/db");
 const Payment = require("../models/Payment");
 const Invoice = require("../models/Invoice");
 const Customer = require("../models/Customer");
 const Area = require("../models/Area");
 const User = require("../models/User");
+const Transaction = require("../models/Transaction");
+const {
+  getCurrentBalance,
+  generatePaymentNumber,
+} = require("../utils/financeUtils");
 
 // Search customers for payment recording
 const searchCustomers = async (req, res) => {
@@ -40,38 +46,45 @@ const searchCustomers = async (req, res) => {
           model: Area,
           attributes: ["id", "areaName"],
         },
-        {
-          model: Invoice,
-          where: {
-            status: {
-              [Op.in]: ["PENDING", "PARTIALLY_PAID", "OVERDUE"],
-            },
-          },
-          required: false,
-          order: [["createdAt", "DESC"]],
-          limit: 1,
-        },
       ],
-      attributes: ["id", "fullName", "customerCode", "phone", "areaId"],
+      attributes: [
+        "id",
+        "fullName",
+        "customerCode",
+        "phone",
+        "areaId",
+        "companyId",
+      ],
       limit: 20,
       order: [["fullName", "ASC"]],
     });
 
-    const customersWithBalance = customers.map((customer) => {
-      const latestInvoice = customer.Invoices?.[0];
-      const balanceAmount = latestInvoice ? latestInvoice.amountTotal : 0;
+    // Get balances for all customers
+    const customersWithBalance = await Promise.all(
+      customers.map(async (customer) => {
+        const balanceAmount = await getCurrentBalance(
+          customer.id,
+          customer.companyId
+        );
 
-      return {
-        id: customer.id,
-        fullName: customer.fullName,
-        customerCode: customer.customerCode,
-        phone: customer.phone,
-        area: customer.Area?.areaName || "Unknown Area",
-        balanceAmount,
-        lastBillAmount: latestInvoice?.amountTotal || 0,
-        lastPayment: 0, // Will be calculated separately
-      };
-    });
+        // Get latest invoice for reference
+        const latestInvoice = await Invoice.findOne({
+          where: { customerId: customer.id, isActive: true },
+          order: [["createdAt", "DESC"]],
+        });
+
+        return {
+          id: customer.id,
+          fullName: customer.fullName,
+          customerCode: customer.customerCode,
+          phone: customer.phone,
+          area: customer.Area?.areaName || "Unknown Area",
+          balanceAmount,
+          lastBillAmount: latestInvoice?.amountTotal || 0,
+          lastPayment: 0, // Can be calculated if needed
+        };
+      })
+    );
 
     res.json({
       success: true,
@@ -109,17 +122,6 @@ const getCustomerPaymentDetails = async (req, res) => {
           model: Area,
           attributes: ["id", "areaName"],
         },
-        {
-          model: Invoice,
-          include: [
-            {
-              model: Payment,
-              order: [["createdAt", "DESC"]],
-              limit: 1,
-            },
-          ],
-          order: [["createdAt", "DESC"]],
-        },
       ],
     });
 
@@ -130,13 +132,30 @@ const getCustomerPaymentDetails = async (req, res) => {
       });
     }
 
-    const latestInvoice = customer.Invoices?.[0];
-    const lastPayment = latestInvoice?.Payments?.[0];
+    // Get current balance
+    const balanceAmount = await getCurrentBalance(
+      customerId,
+      customer.companyId
+    );
 
-    // Calculate balance
-    const balanceAmount = latestInvoice
-      ? latestInvoice.amountTotal - (lastPayment?.amount || 0)
-      : 0;
+    // Get latest invoice for reference
+    const latestInvoice = await Invoice.findOne({
+      where: { customerId, isActive: true },
+      order: [["createdAt", "DESC"]],
+    });
+
+    // Get latest payment
+    const latestPayment = await Payment.findOne({
+      where: { customerId, isActive: true },
+      order: [["collectedAt", "DESC"]],
+      include: [
+        {
+          model: User,
+          as: "collector",
+          attributes: ["id", "name"],
+        },
+      ],
+    });
 
     const paymentDetails = {
       customer: {
@@ -149,16 +168,18 @@ const getCustomerPaymentDetails = async (req, res) => {
       balanceAmount,
       lastBillAmount: latestInvoice?.amountTotal || 0,
       lastPayment: {
-        amount: lastPayment?.amount || 0,
-        date: lastPayment?.collectedAt || null,
+        amount: latestPayment?.amount || 0,
+        date: latestPayment?.collectedAt || null,
+        method: latestPayment?.method || null,
       },
       latestInvoice: latestInvoice
         ? {
             id: latestInvoice.id,
+            invoiceNumber: latestInvoice.invoiceNumber,
             amountTotal: latestInvoice.amountTotal,
             subtotal: latestInvoice.subtotal,
             dueDate: latestInvoice.dueDate,
-            status: latestInvoice.status,
+            type: latestInvoice.type,
           }
         : null,
     };
@@ -177,8 +198,9 @@ const getCustomerPaymentDetails = async (req, res) => {
   }
 };
 
-// Record a payment
+// Record a payment (independent of invoices)
 const recordPayment = async (req, res) => {
+  const dbTransaction = await sequelize.transaction();
   try {
     const { customerId, invoiceId, amount, discount, method, comments } =
       req.body;
@@ -191,7 +213,7 @@ const recordPayment = async (req, res) => {
       });
     }
 
-    // Find the customer and their latest pending invoice
+    // Find the customer
     const whereClause = {
       id: customerId,
     };
@@ -204,20 +226,6 @@ const recordPayment = async (req, res) => {
 
     const customer = await Customer.findOne({
       where: whereClause,
-      include: [
-        {
-          model: Invoice,
-          where: invoiceId
-            ? { id: invoiceId }
-            : {
-                status: {
-                  [Op.in]: ["PENDING", "PARTIALLY_PAID", "OVERDUE"],
-                },
-              },
-          order: [["createdAt", "DESC"]],
-          limit: 1,
-        },
-      ],
     });
 
     if (!customer) {
@@ -227,59 +235,76 @@ const recordPayment = async (req, res) => {
       });
     }
 
-    const invoice = customer.Invoices?.[0];
-    if (!invoice) {
-      return res.status(400).json({
-        success: false,
-        message: "No pending invoice found for this customer",
-      });
-    }
+    const companyId =
+      req.user.roleCode === "SUPER_ADMIN"
+        ? customer.companyId
+        : req.user.companyId;
 
-    // Create payment record
-    const paymentData = {
-      companyId:
-        req.user.roleCode === "SUPER_ADMIN"
-          ? invoice.companyId
-          : req.user.companyId,
-      invoiceId: invoice.id,
-      collectedBy: req.user.id,
-      collectedAt: new Date(),
-      method: method.toUpperCase(),
-      amount: parseFloat(amount),
-      comments: comments || "",
-    };
+    // Get current balance
+    const currentBalance = await getCurrentBalance(customerId, companyId);
+    const paymentAmount = parseFloat(amount) - (parseFloat(discount) || 0);
+    const newBalance = Math.max(0, currentBalance - paymentAmount);
 
-    const payment = await Payment.create(paymentData);
+    // Create transaction first
+    const paymentTransaction = await Transaction.create(
+      {
+        companyId,
+        customerId,
+        type: "PAYMENT",
+        direction: "CREDIT",
+        amount: paymentAmount,
+        balanceBefore: currentBalance,
+        balanceAfter: newBalance,
+        description: `Payment of ₹${paymentAmount.toFixed(
+          2
+        )} via ${method.toUpperCase()}${comments ? ` - ${comments}` : ""}`,
+        referenceType: "payment",
+        transactionDate: new Date(),
+        createdBy: req.user.id,
+      },
+      { transaction: dbTransaction }
+    );
 
-    // Update invoice status
-    const totalPaid = await Payment.sum("amount", {
-      where: { invoiceId: invoice.id },
-    });
+    // Create payment document
+    const payment = await Payment.create(
+      {
+        transactionId: paymentTransaction.id,
+        paymentNumber: generatePaymentNumber(),
+        companyId,
+        customerId,
+        invoiceId: invoiceId || null, // Optional - for reference only
+        amount: paymentAmount,
+        discount: parseFloat(discount) || 0,
+        method: method.toUpperCase(),
+        collectedBy: req.user.id,
+        collectedAt: new Date(),
+        comments: comments || "",
+      },
+      { transaction: dbTransaction }
+    );
 
-    let newStatus = "PARTIALLY_PAID";
-    if (totalPaid >= invoice.amountTotal) {
-      newStatus = "PAID";
-    } else if (invoice.dueDate && new Date() > new Date(invoice.dueDate)) {
-      newStatus = "OVERDUE";
-    }
+    // Update transaction reference
+    await paymentTransaction.update(
+      { referenceId: payment.id },
+      { transaction: dbTransaction }
+    );
 
-    await invoice.update({
-      status: newStatus,
-      discounts: (invoice.discounts || 0) + (parseFloat(discount) || 0),
-    });
+    await dbTransaction.commit();
 
     res.json({
       success: true,
       message: "Payment recorded successfully",
       data: {
         paymentId: payment.id,
+        paymentNumber: payment.paymentNumber,
         amount: payment.amount,
         method: payment.method,
         collectedAt: payment.collectedAt,
-        invoiceStatus: newStatus,
+        newBalance,
       },
     });
   } catch (error) {
+    await dbTransaction.rollback();
     console.error("Error recording payment:", error);
     res.status(500).json({
       success: false,
@@ -306,7 +331,9 @@ const getPaymentHistory = async (req, res) => {
     const offset = (page - 1) * limit;
 
     // Build where clause
-    const whereClause = {};
+    const whereClause = {
+      isActive: true,
+    };
 
     // For super admin, don't filter by companyId (can see all payments)
     // For other users, filter by their companyId
@@ -317,6 +344,10 @@ const getPaymentHistory = async (req, res) => {
       whereClause.companyId = companyId;
     }
 
+    if (customerId) {
+      whereClause.customerId = customerId;
+    }
+
     if (startDate && endDate) {
       whereClause.collectedAt = {
         [Op.between]: [new Date(startDate), new Date(endDate + " 23:59:59")],
@@ -324,7 +355,7 @@ const getPaymentHistory = async (req, res) => {
     }
 
     if (paymentMethod) {
-      whereClause.method = paymentMethod;
+      whereClause.method = paymentMethod.toUpperCase();
     }
 
     // Get payments with related data
@@ -332,22 +363,20 @@ const getPaymentHistory = async (req, res) => {
       where: whereClause,
       include: [
         {
-          model: Invoice,
+          model: Customer,
+          where: areaId ? { areaId } : {},
           include: [
             {
-              model: Customer,
-              where: customerId ? { id: customerId } : {},
-              include: [
-                {
-                  model: Area,
-                  where: areaId ? { id: areaId } : {},
-                  attributes: ["id", "areaName"],
-                },
-              ],
-              attributes: ["id", "fullName", "customerCode", "areaId"],
+              model: Area,
+              attributes: ["id", "areaName"],
             },
           ],
-          attributes: ["id", "subtotal", "discounts", "amountTotal", "status"],
+          attributes: ["id", "fullName", "customerCode", "phone", "areaId"],
+        },
+        {
+          model: Invoice,
+          attributes: ["id", "invoiceNumber", "amountTotal", "type"],
+          required: false,
         },
         {
           model: User,
@@ -362,21 +391,27 @@ const getPaymentHistory = async (req, res) => {
 
     const paymentHistory = payments.map((payment) => ({
       id: payment.id,
+      paymentNumber: payment.paymentNumber,
       amount: payment.amount,
+      discount: payment.discount,
       method: payment.method,
       collectedAt: payment.collectedAt,
       comments: payment.comments,
       customer: {
-        id: payment.Invoice.Customer.id,
-        name: payment.Invoice.Customer.fullName,
-        customerCode: payment.Invoice.Customer.customerCode,
-        area: payment.Invoice.Customer.Area?.areaName || "Unknown Area",
+        id: payment.Customer.id,
+        name: payment.Customer.fullName,
+        customerCode: payment.Customer.customerCode,
+        phone: payment.Customer.phone,
+        area: payment.Customer.Area?.areaName || "Unknown Area",
       },
-      invoice: {
-        id: payment.Invoice.id,
-        amountTotal: payment.Invoice.amountTotal,
-        status: payment.Invoice.status,
-      },
+      invoice: payment.Invoice
+        ? {
+            id: payment.Invoice.id,
+            invoiceNumber: payment.Invoice.invoiceNumber,
+            amountTotal: payment.Invoice.amountTotal,
+            type: payment.Invoice.type,
+          }
+        : null,
       collector: payment.collector?.name || "Unknown",
     }));
 
@@ -402,9 +437,182 @@ const getPaymentHistory = async (req, res) => {
   }
 };
 
+// Delete payment
+const deletePayment = async (req, res) => {
+  const dbTransaction = await sequelize.transaction();
+  try {
+    const { paymentId } = req.params;
+    const { companyId } = req.user;
+
+    const payment = await Payment.findOne({
+      where: {
+        id: paymentId,
+        companyId,
+        isActive: true,
+      },
+      include: [
+        {
+          model: Transaction,
+        },
+      ],
+      transaction: dbTransaction,
+    });
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment not found",
+      });
+    }
+
+    // Verify this is the latest transaction (most recent by date and id)
+    if (payment.Transaction) {
+      const latestTransaction = await Transaction.findOne({
+        where: {
+          customerId: payment.customerId,
+          companyId,
+          isActive: true,
+        },
+        order: [
+          ["transactionDate", "DESC"],
+          ["id", "DESC"],
+        ],
+        transaction: dbTransaction,
+      });
+
+      // Compare IDs as integers to avoid type mismatch issues
+      const paymentTransactionId = parseInt(payment.Transaction.id, 10);
+      const latestId = latestTransaction
+        ? parseInt(latestTransaction.id, 10)
+        : null;
+
+      if (!latestTransaction || latestId !== paymentTransactionId) {
+        await dbTransaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Only the latest payment can be deleted",
+        });
+      }
+    }
+
+    // Soft delete payment
+    await payment.update({ isActive: false }, { transaction: dbTransaction });
+
+    // Soft delete associated transaction (no recalculation needed since it's the latest)
+    if (payment.Transaction) {
+      await payment.Transaction.update(
+        { isActive: false },
+        { transaction: dbTransaction }
+      );
+    }
+
+    await dbTransaction.commit();
+
+    res.json({
+      success: true,
+      message: "Payment deleted successfully",
+    });
+  } catch (error) {
+    await dbTransaction.rollback();
+    console.error("Error deleting payment:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete payment",
+      error: error.message,
+    });
+  }
+};
+
+// Get payment details for preview
+const getPaymentDetails = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { companyId } = req.user;
+
+    const payment = await Payment.findOne({
+      where: {
+        id: paymentId,
+        companyId,
+        isActive: true,
+      },
+      include: [
+        {
+          model: Transaction,
+        },
+        {
+          model: Invoice,
+          attributes: [
+            "id",
+            "invoiceNumber",
+            "amountTotal",
+            "periodStart",
+            "periodEnd",
+            "type",
+          ],
+          include: [
+            {
+              model: Customer,
+              attributes: [
+                "id",
+                "fullName",
+                "customerCode",
+                "phone",
+                "address",
+              ],
+              include: [
+                {
+                  model: Area,
+                  attributes: ["areaName"],
+                },
+              ],
+            },
+          ],
+          required: false,
+        },
+        {
+          model: Customer,
+          attributes: ["id", "fullName", "customerCode", "phone", "address"],
+          include: [
+            {
+              model: Area,
+              attributes: ["areaName"],
+            },
+          ],
+        },
+        {
+          model: User,
+          as: "collector",
+          attributes: ["id", "name"],
+        },
+      ],
+    });
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: payment.toJSON(),
+    });
+  } catch (error) {
+    console.error("Error fetching payment details:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch payment details",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   searchCustomers,
   getCustomerPaymentDetails,
   recordPayment,
   getPaymentHistory,
+  deletePayment,
+  getPaymentDetails,
 };

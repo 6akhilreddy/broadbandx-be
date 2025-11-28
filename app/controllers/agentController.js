@@ -3,6 +3,7 @@ const User = require("../models/User");
 const Payment = require("../models/Payment");
 const Customer = require("../models/Customer");
 const Invoice = require("../models/Invoice");
+const Area = require("../models/Area");
 const { Op } = require("sequelize");
 const { Role } = require("../models");
 
@@ -375,7 +376,7 @@ exports.getAgentPaymentHistory = async (req, res) => {
           include: [
             {
               model: Customer,
-              attributes: ["id", "fullName"],
+              attributes: ["id", "fullName", "address"],
             },
           ],
         },
@@ -401,6 +402,7 @@ exports.getAgentPaymentHistory = async (req, res) => {
           ? {
               id: payment.Invoice.Customer.id,
               name: payment.Invoice.Customer.fullName,
+              address: payment.Invoice.Customer.address,
             }
           : null,
       })),
@@ -411,6 +413,341 @@ exports.getAgentPaymentHistory = async (req, res) => {
         hasNext,
         hasPrevious,
       },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get monthly collection trend for a specific agent
+exports.getAgentMonthlyTrend = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const companyId = req.userCompanyId;
+
+    // Get AGENT role ID
+    const agentRole = await Role.findOne({ where: { code: "AGENT" } });
+    if (!agentRole) {
+      return res.status(500).json({ error: "Agent role not found" });
+    }
+
+    // Verify the agent exists and belongs to the company
+    const agent = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    // Calculate monthly trend for last 12 months
+    const now = new Date();
+    const monthlyTrend = [];
+
+    for (let i = 11; i >= 0; i--) {
+      const trendDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const trendMonthStart = new Date(
+        trendDate.getFullYear(),
+        trendDate.getMonth(),
+        1
+      );
+      const trendMonthEnd = new Date(
+        trendDate.getFullYear(),
+        trendDate.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999
+      );
+
+      const monthCollection =
+        (await Payment.sum("amount", {
+          where: {
+            collectedBy: id,
+            companyId,
+            collectedAt: {
+              [Op.between]: [trendMonthStart, trendMonthEnd],
+            },
+          },
+        })) || 0;
+
+      monthlyTrend.push({
+        month: trendMonthStart.toLocaleDateString("en-US", {
+          month: "short",
+          year: "numeric",
+        }),
+        amount: monthCollection,
+      });
+    }
+
+    res.json({ monthlyTrend });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get agent areas and permissions
+exports.getAgentAreasAndPermissions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const companyId = req.userCompanyId;
+
+    // Get AGENT role ID
+    const agentRole = await Role.findOne({ where: { code: "AGENT" } });
+    if (!agentRole) {
+      return res.status(500).json({ error: "Agent role not found" });
+    }
+
+    // Verify the agent exists and belongs to the company
+    const agent = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+      attributes: ["id", "assignedAreas", "agentPermissions"],
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    // Get all areas for the company
+    const allAreas = await Area.findAll({
+      where: { companyId },
+      attributes: ["id", "areaName"],
+      order: [["areaName", "ASC"]],
+    });
+
+    // Ensure assignedAreas is properly formatted (handle JSON parsing if needed)
+    let assignedAreasData = agent.assignedAreas || [];
+    if (typeof assignedAreasData === "string") {
+      try {
+        assignedAreasData = JSON.parse(assignedAreasData);
+      } catch (e) {
+        assignedAreasData = [];
+      }
+    }
+
+    let agentPermissionsData = agent.agentPermissions || [];
+    if (typeof agentPermissionsData === "string") {
+      try {
+        agentPermissionsData = JSON.parse(agentPermissionsData);
+      } catch (e) {
+        agentPermissionsData = [];
+      }
+    }
+
+    res.json({
+      assignedAreas: assignedAreasData,
+      agentPermissions: agentPermissionsData,
+      allAreas: allAreas.map((area) => ({
+        id: area.id,
+        areaName: area.areaName,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Update agent areas and permissions
+exports.updateAgentAreasAndPermissions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { assignedAreas, agentPermissions } = req.body;
+    const companyId = req.userCompanyId;
+
+    // Get AGENT role ID
+    const agentRole = await Role.findOne({ where: { code: "AGENT" } });
+    if (!agentRole) {
+      return res.status(500).json({ error: "Agent role not found" });
+    }
+
+    // Verify the agent exists and belongs to the company
+    const agent = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    // Validate assignedAreas - ensure all areas belong to the company
+    if (assignedAreas && Array.isArray(assignedAreas)) {
+      const validAreas = await Area.findAll({
+        where: {
+          id: { [Op.in]: assignedAreas },
+          companyId,
+        },
+        attributes: ["id"],
+      });
+
+      if (validAreas.length !== assignedAreas.length) {
+        return res.status(400).json({
+          error: "Some areas are invalid or don't belong to the company",
+        });
+      }
+    }
+
+    // Update agent
+    await User.update(
+      {
+        assignedAreas: assignedAreas || [],
+        agentPermissions: agentPermissions || [],
+      },
+      {
+        where: { id, roleId: agentRole.id, companyId },
+      }
+    );
+
+    // Return updated agent
+    const updatedAgent = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+      attributes: ["id", "assignedAreas", "agentPermissions"],
+    });
+
+    res.json(updatedAgent);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Update agent areas only
+exports.updateAgentAreas = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { assignedAreas } = req.body;
+    const companyId = req.userCompanyId;
+
+    // Get AGENT role ID
+    const agentRole = await Role.findOne({ where: { code: "AGENT" } });
+    if (!agentRole) {
+      return res.status(500).json({ error: "Agent role not found" });
+    }
+
+    // Verify the agent exists and belongs to the company
+    const agent = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+      attributes: ["id", "assignedAreas", "agentPermissions"],
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    // Validate assignedAreas - ensure all areas belong to the company
+    if (assignedAreas && Array.isArray(assignedAreas)) {
+      const validAreas = await Area.findAll({
+        where: {
+          id: { [Op.in]: assignedAreas },
+          companyId,
+        },
+        attributes: ["id"],
+      });
+
+      if (validAreas.length !== assignedAreas.length) {
+        return res.status(400).json({
+          error: "Some areas are invalid or don't belong to the company",
+        });
+      }
+    }
+
+    // Update only assignedAreas, keep existing agentPermissions
+    await User.update(
+      {
+        assignedAreas: assignedAreas || [],
+      },
+      {
+        where: { id, roleId: agentRole.id, companyId },
+      }
+    );
+
+    // Return updated agent
+    const updatedAgent = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+      attributes: ["id", "assignedAreas", "agentPermissions"],
+    });
+
+    // Normalize JSON fields
+    let assignedAreasData = updatedAgent.assignedAreas || [];
+    if (typeof assignedAreasData === "string") {
+      try {
+        assignedAreasData = JSON.parse(assignedAreasData);
+      } catch (e) {
+        assignedAreasData = [];
+      }
+    }
+
+    res.json({
+      id: updatedAgent.id,
+      assignedAreas: assignedAreasData,
+      agentPermissions: updatedAgent.agentPermissions || [],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Update agent permissions only
+exports.updateAgentPermissions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { agentPermissions } = req.body;
+    const companyId = req.userCompanyId;
+
+    // Get AGENT role ID
+    const agentRole = await Role.findOne({ where: { code: "AGENT" } });
+    if (!agentRole) {
+      return res.status(500).json({ error: "Agent role not found" });
+    }
+
+    // Verify the agent exists and belongs to the company
+    const agent = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+      attributes: ["id", "assignedAreas", "agentPermissions"],
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    // Update only agentPermissions, keep existing assignedAreas
+    await User.update(
+      {
+        agentPermissions: agentPermissions || [],
+      },
+      {
+        where: { id, roleId: agentRole.id, companyId },
+      }
+    );
+
+    // Return updated agent
+    const updatedAgent = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+      attributes: ["id", "assignedAreas", "agentPermissions"],
+    });
+
+    // Normalize JSON fields
+    let agentPermissionsData = updatedAgent.agentPermissions || [];
+    if (typeof agentPermissionsData === "string") {
+      try {
+        agentPermissionsData = JSON.parse(agentPermissionsData);
+      } catch (e) {
+        agentPermissionsData = [];
+      }
+    }
+
+    let assignedAreasData = updatedAgent.assignedAreas || [];
+    if (typeof assignedAreasData === "string") {
+      try {
+        assignedAreasData = JSON.parse(assignedAreasData);
+      } catch (e) {
+        assignedAreasData = [];
+      }
+    }
+
+    res.json({
+      id: updatedAgent.id,
+      assignedAreas: assignedAreasData,
+      agentPermissions: agentPermissionsData,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

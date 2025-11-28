@@ -12,16 +12,16 @@ const defineAssociations = (models = null) => {
   const Subscription =
     models?.Subscription || require("../models/Subscription");
   const Invoice = models?.Invoice || require("../models/Invoice");
-  const InvoiceItem = models?.InvoiceItem || require("../models/InvoiceItem");
   const Payment = models?.Payment || require("../models/Payment");
   const Transaction = models?.Transaction || require("../models/Transaction");
-  const PendingCharge =
-    models?.PendingCharge || require("../models/PendingCharge");
   const Feature = models?.Feature || require("../models/Feature");
   const Role = models?.Role || require("../models/Role");
   const RolePermission =
     models?.RolePermission || require("../models/RolePermission");
   const Area = models?.Area || require("../models/Area");
+  const Complaint = models?.Complaint || require("../models/Complaint");
+  const ComplaintComment =
+    models?.ComplaintComment || require("../models/ComplaintComment");
   // 🔹 Area Associations 🔹
   // Area belongs to Company and User (createdBy)
   Company.hasMany(Area, { foreignKey: "companyId", onDelete: "CASCADE" });
@@ -92,15 +92,15 @@ const defineAssociations = (models = null) => {
     foreignKey: "assignedAgentId",
   });
 
-  // Tracks which user manually overrode an invoice.
-  User.hasMany(Invoice, {
-    foreignKey: "manualOverrideBy",
-    as: "OverriddenInvoices",
-    onDelete: "SET NULL",
+  // User created transactions
+  User.hasMany(Transaction, {
+    foreignKey: "createdBy",
+    as: "CreatedTransactions",
+    onDelete: "RESTRICT",
   });
-  Invoice.belongsTo(User, {
-    as: "OverriddenBy",
-    foreignKey: "manualOverrideBy",
+  Transaction.belongsTo(User, {
+    as: "CreatedBy",
+    foreignKey: "createdBy",
   });
 
   // User belongs to Role
@@ -143,20 +143,33 @@ const defineAssociations = (models = null) => {
   // 🔹 Subscription and Invoice Associations 🔹
   Subscription.hasMany(Invoice, {
     foreignKey: "subscriptionId",
-    onDelete: "CASCADE",
+    onDelete: "SET NULL", // Subscription can be null for ADJUSTED invoices
   });
   Invoice.belongsTo(Subscription, { foreignKey: "subscriptionId" });
 
-  // 🔹 Invoice and Payment Associations 🔹
-  Invoice.hasMany(Payment, { foreignKey: "invoiceId", onDelete: "CASCADE" });
-  Payment.belongsTo(Invoice, { foreignKey: "invoiceId" });
-
-  // 🔹 Invoice and InvoiceItem Associations 🔹
-  Invoice.hasMany(InvoiceItem, {
-    foreignKey: "invoiceId",
+  // 🔹 Transaction and Invoice Associations 🔹
+  Transaction.hasOne(Invoice, {
+    foreignKey: "transactionId",
     onDelete: "CASCADE",
   });
-  InvoiceItem.belongsTo(Invoice, { foreignKey: "invoiceId" });
+  Invoice.belongsTo(Transaction, { foreignKey: "transactionId" });
+
+  // 🔹 Transaction and Payment Associations 🔹
+  Transaction.hasOne(Payment, {
+    foreignKey: "transactionId",
+    onDelete: "CASCADE",
+  });
+  Payment.belongsTo(Transaction, { foreignKey: "transactionId" });
+
+  // 🔹 Invoice and Payment Associations (optional reference) 🔹
+  Invoice.hasMany(Payment, {
+    foreignKey: "invoiceId",
+    onDelete: "SET NULL", // Payment can exist without invoice
+  });
+  Payment.belongsTo(Invoice, {
+    foreignKey: "invoiceId",
+    required: false,
+  });
 
   // 🔹 Customer and Transaction Associations 🔹
   Customer.hasMany(Transaction, {
@@ -165,12 +178,12 @@ const defineAssociations = (models = null) => {
   });
   Transaction.belongsTo(Customer, { foreignKey: "customerId" });
 
-  // 🔹 Customer and PendingCharge Associations 🔹
-  Customer.hasMany(PendingCharge, {
+  // 🔹 Customer and Payment Associations 🔹
+  Customer.hasMany(Payment, {
     foreignKey: "customerId",
     onDelete: "CASCADE",
   });
-  PendingCharge.belongsTo(Customer, { foreignKey: "customerId" });
+  Payment.belongsTo(Customer, { foreignKey: "customerId" });
 
   // 🔹 Company and Transaction Associations 🔹
   Company.hasMany(Transaction, {
@@ -179,31 +192,49 @@ const defineAssociations = (models = null) => {
   });
   Transaction.belongsTo(Company, { foreignKey: "companyId" });
 
-  // 🔹 Company and PendingCharge Associations 🔹
-  Company.hasMany(PendingCharge, {
-    foreignKey: "companyId",
+  // 🔹 Complaint Associations 🔹
+  Company.hasMany(Complaint, { foreignKey: "companyId", onDelete: "CASCADE" });
+  Complaint.belongsTo(Company, { foreignKey: "companyId" });
+
+  Customer.hasMany(Complaint, {
+    foreignKey: "customerId",
     onDelete: "CASCADE",
   });
-  PendingCharge.belongsTo(Company, { foreignKey: "companyId" });
+  Complaint.belongsTo(Customer, { foreignKey: "customerId" });
 
-  // 🔹 User and Transaction Associations 🔹
-  User.hasMany(Transaction, {
+  User.hasMany(Complaint, {
+    foreignKey: "assignedAgentId",
+    as: "AssignedComplaints",
+    onDelete: "SET NULL",
+  });
+  Complaint.belongsTo(User, {
+    as: "AssignedAgent",
+    foreignKey: "assignedAgentId",
+  });
+
+  User.hasMany(Complaint, {
     foreignKey: "createdBy",
-    as: "CreatedTransactions",
+    as: "CreatedComplaints",
     onDelete: "RESTRICT",
   });
-  Transaction.belongsTo(User, {
+  Complaint.belongsTo(User, {
     as: "CreatedBy",
     foreignKey: "createdBy",
   });
 
-  // 🔹 User and PendingCharge Associations 🔹
-  User.hasMany(PendingCharge, {
+  // 🔹 ComplaintComment Associations 🔹
+  Complaint.hasMany(ComplaintComment, {
+    foreignKey: "complaintId",
+    onDelete: "CASCADE",
+  });
+  ComplaintComment.belongsTo(Complaint, { foreignKey: "complaintId" });
+
+  User.hasMany(ComplaintComment, {
     foreignKey: "createdBy",
-    as: "CreatedPendingCharges",
+    as: "CreatedComplaintComments",
     onDelete: "RESTRICT",
   });
-  PendingCharge.belongsTo(User, {
+  ComplaintComment.belongsTo(User, {
     as: "CreatedBy",
     foreignKey: "createdBy",
   });

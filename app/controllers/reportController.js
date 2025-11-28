@@ -4,7 +4,7 @@ const Invoice = require("../models/Invoice");
 const Customer = require("../models/Customer");
 const Area = require("../models/Area");
 const User = require("../models/User");
-const PendingCharge = require("../models/PendingCharge");
+const Transaction = require("../models/Transaction");
 
 // Get invoice history
 const getInvoiceHistory = async (req, res) => {
@@ -41,8 +41,11 @@ const getInvoiceHistory = async (req, res) => {
       };
     }
 
+    // Note: Invoice status removed - invoices are now linked to transactions
+    // Filter by type if needed
     if (status) {
-      whereClause.status = status;
+      // Map old status to invoice type if needed
+      // For now, we'll ignore status filter
     }
 
     console.log("Where clause:", whereClause);
@@ -84,7 +87,7 @@ const getInvoiceHistory = async (req, res) => {
 
     // Debug: Check all invoices in database
     const allInvoices = await Invoice.findAll({
-      attributes: ["id", "companyId", "createdAt", "status"],
+      attributes: ["id", "companyId", "createdAt", "type"],
       limit: 5,
     });
     console.log(
@@ -93,7 +96,7 @@ const getInvoiceHistory = async (req, res) => {
         id: inv.id,
         companyId: inv.companyId,
         createdAt: inv.createdAt,
-        status: inv.status,
+        type: inv.type,
       }))
     );
 
@@ -120,7 +123,7 @@ const getInvoiceHistory = async (req, res) => {
         periodStart: invoice.periodStart,
         periodEnd: invoice.periodEnd,
         dueDate: invoice.dueDate,
-        status: invoice.status,
+        type: invoice.type,
         totalPaid,
         balance,
         createdAt: invoice.createdAt,
@@ -242,7 +245,7 @@ const getPaymentHistory = async (req, res) => {
       invoice: {
         id: payment.Invoice.id,
         amountTotal: payment.Invoice.amountTotal,
-        status: payment.Invoice.status,
+        type: payment.Invoice.type,
       },
       collector: payment.collector?.name || "Unknown",
     }));
@@ -342,13 +345,18 @@ const getUserHistory = async (req, res) => {
       order: [["collectedAt", "DESC"]],
     });
 
-    // Get all pending charges for the customer
-    const pendingCharges = await PendingCharge.findAll({
+    // Get all add-on bills and adjustments for the customer (replaces pending charges)
+    const addOnBills = await Transaction.findAll({
       where: {
         customerId,
         companyId: companyId || req.user.companyId,
         isActive: true,
-        ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter }),
+        type: {
+          [Op.in]: ["ADD_ON_BILL", "BALANCE_ADJUSTMENT"],
+        },
+        ...(Object.keys(dateFilter).length > 0 && {
+          transactionDate: dateFilter,
+        }),
       },
       include: [
         {
@@ -356,8 +364,13 @@ const getUserHistory = async (req, res) => {
           as: "CreatedBy",
           attributes: ["id", "name"],
         },
+        {
+          model: Invoice,
+          attributes: ["id", "invoiceNumber", "type"],
+          required: false,
+        },
       ],
-      order: [["createdAt", "DESC"]],
+      order: [["transactionDate", "DESC"]],
     });
 
     // Combine and sort all activities
@@ -370,8 +383,10 @@ const getUserHistory = async (req, res) => {
         id: invoice.id,
         date: invoice.createdAt,
         amount: invoice.amountTotal,
-        status: invoice.status,
-        description: `Invoice generated for ${invoice.periodStart} to ${invoice.periodEnd}`,
+        invoiceType: invoice.type,
+        description: `Invoice generated for ${invoice.periodStart || ""} to ${
+          invoice.periodEnd || ""
+        }`,
         dueDate: invoice.dueDate,
         payments: invoice.Payments.map((payment) => ({
           id: payment.id,
@@ -398,16 +413,22 @@ const getUserHistory = async (req, res) => {
       });
     });
 
-    // Add pending charges (adjustments)
-    pendingCharges.forEach((charge) => {
+    // Add add-on bills and adjustments
+    addOnBills.forEach((tx) => {
       activities.push({
-        type: "ADJUSTMENT",
-        id: charge.id,
-        date: charge.createdAt,
-        amount: charge.amount,
-        chargeType: charge.chargeType,
-        description: charge.description,
-        createdBy: charge.CreatedBy?.name || "Unknown",
+        type: tx.type === "ADD_ON_BILL" ? "ADD_ON_BILL" : "ADJUSTMENT",
+        id: tx.id,
+        date: tx.transactionDate,
+        amount: tx.amount,
+        description: tx.description,
+        createdBy: tx.CreatedBy?.name || "Unknown",
+        invoice: tx.Invoice
+          ? {
+              id: tx.Invoice.id,
+              invoiceNumber: tx.Invoice.invoiceNumber,
+              type: tx.Invoice.type,
+            }
+          : null,
       });
     });
 
@@ -426,25 +447,22 @@ const getUserHistory = async (req, res) => {
       summary: {
         totalInvoices: invoices.length,
         totalPayments: payments.length,
-        totalAdjustments: pendingCharges.length,
+        totalAdjustments: addOnBills.filter(
+          (t) => t.type === "BALANCE_ADJUSTMENT"
+        ).length,
+        totalAddOnBills: addOnBills.filter((t) => t.type === "ADD_ON_BILL")
+          .length,
         totalAmount: invoices.reduce(
           (sum, inv) => sum + (inv.amountTotal || 0),
           0
         ),
         totalPaid: payments.reduce((sum, pay) => sum + (pay.amount || 0), 0),
-        totalAdjustmentsAmount: pendingCharges.reduce(
-          (sum, charge) => sum + (charge.amount || 0),
+        totalAdjustmentsAmount: addOnBills.reduce(
+          (sum, tx) => sum + (tx.amount || 0),
           0
         ),
         outstandingBalance:
-          invoices.reduce((sum, inv) => {
-            const paid = inv.Payments.reduce(
-              (pSum, pay) => pSum + (pay.amount || 0),
-              0
-            );
-            return sum + (inv.amountTotal - paid);
-          }, 0) +
-          pendingCharges.reduce((sum, charge) => sum + (charge.amount || 0), 0),
+          addOnBills.length > 0 ? addOnBills[0].balanceAfter : 0, // Current balance from latest transaction
       },
     };
 
@@ -514,7 +532,7 @@ const getAllInvoices = async (req, res) => {
         invoices: invoices.map((inv) => ({
           id: inv.id,
           amountTotal: inv.amountTotal,
-          status: inv.status,
+          type: inv.type,
           createdAt: inv.createdAt,
           customer: inv.Customer
             ? {

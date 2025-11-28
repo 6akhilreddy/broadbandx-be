@@ -44,7 +44,7 @@ const getCollectionData = async (req, res) => {
               attributes: ["id", "fullName", "customerCode", "areaId"],
             },
           ],
-          attributes: ["id", "subtotal", "discounts", "amountTotal", "status"],
+          attributes: ["id", "subtotal", "discounts", "amountTotal"],
         },
         {
           model: User,
@@ -184,7 +184,7 @@ const getCollectionSummary = async (req, res) => {
               attributes: ["id", "fullName", "customerCode", "areaId"],
             },
           ],
-          attributes: ["id", "subtotal", "discounts", "amountTotal", "status"],
+          attributes: ["id", "subtotal", "discounts", "amountTotal"],
         },
       ],
     });
@@ -236,12 +236,12 @@ const getCollectionSummary = async (req, res) => {
     const totalCustomers = payments.length;
 
     // Get pending invoices for balance calculation
+    // Note: Invoice doesn't have a status field, so we'll get all active invoices
+    // and calculate balance based on transactions
     const pendingInvoices = await Invoice.findAll({
       where: {
         companyId: companyId || req.user.companyId,
-        status: {
-          [Op.in]: ["PENDING", "PARTIALLY_PAID", "OVERDUE"],
-        },
+        isActive: true,
       },
       include: [
         {

@@ -1,28 +1,12 @@
 /* eslint-disable no-console */
 const sequelize = require("../config/db");
-const defineAssociations = require("../models/associations");
+require("dotenv").config();
 
-// --- Manually Import All Models ---
-const models = {
-  Company: require("../models/Company"),
-  User: require("../models/User"),
-  Plan: require("../models/Plan"),
-  Customer: require("../models/Customer"),
-  CustomerHardware: require("../models/CustomerHardware"),
-  Subscription: require("../models/Subscription"),
-  Invoice: require("../models/Invoice"),
-  InvoiceItem: require("../models/InvoiceItem"),
-  Payment: require("../models/Payment"),
-  Transaction: require("../models/Transaction"),
-  PendingCharge: require("../models/PendingCharge"),
-  Feature: require("../models/Feature"),
-  Role: require("../models/Role"),
-  RolePermission: require("../models/RolePermission"),
-  Area: require("../models/Area"),
-};
+// --- Import All Models from index.js (already has associations defined) ---
+const models = require("../models");
 
-// --- Manually Define Associations ---
-defineAssociations(models);
+// Import finance utilities (payment number only - invoice number is defined locally)
+const { generatePaymentNumber } = require("../utils/financeUtils");
 
 // ============ Embedded data extracted from Excel ============
 // Localities (unique)
@@ -950,16 +934,66 @@ const deviceFallbackTypes = [
   "Set-top Box",
 ];
 
-const generateMAC = () =>
-  `00:1B:44:${randomInt(11, 99)}:${randomInt(11, 99)}:${randomInt(11, 99)}`;
+// Track used MAC addresses to ensure uniqueness
+const usedMACs = new Set();
+const generateMAC = () => {
+  let mac;
+  let attempts = 0;
+  do {
+    // Use a wider range and include hex characters for more uniqueness
+    const octet1 = randomInt(0, 255);
+    const octet2 = randomInt(0, 255);
+    const octet3 = randomInt(0, 255);
+    mac = `00:1B:44:${octet1
+      .toString(16)
+      .padStart(2, "0")
+      .toUpperCase()}:${octet2
+      .toString(16)
+      .padStart(2, "0")
+      .toUpperCase()}:${octet3.toString(16).padStart(2, "0").toUpperCase()}`;
+    attempts++;
+    if (attempts > 1000) {
+      // Fallback: use timestamp-based MAC if too many collisions
+      const timestamp = Date.now();
+      mac = `00:1B:44:${((timestamp >> 16) & 0xff)
+        .toString(16)
+        .padStart(2, "0")
+        .toUpperCase()}:${((timestamp >> 8) & 0xff)
+        .toString(16)
+        .padStart(2, "0")
+        .toUpperCase()}:${(timestamp & 0xff)
+        .toString(16)
+        .padStart(2, "0")
+        .toUpperCase()}`;
+      break;
+    }
+  } while (usedMACs.has(mac));
+  usedMACs.add(mac);
+  return mac;
+};
 
-// Random date within a specific month of a specific year
+// Random date within a specific month of a specific year (capped at MAX_SEED_DATE)
 const generateRandomDateInMonth = (year, month) => {
   const daysInMonth = new Date(year, month, 0).getDate();
-  const randomDay = randomInt(1, daysInMonth);
+  let randomDay = randomInt(1, daysInMonth);
+
+  // If this is November 2025, cap the day at 12
+  if (year === 2025 && month === 11) {
+    randomDay = Math.min(randomDay, 12);
+  }
+
   const randomHour = randomInt(9, 18);
   const randomMinute = randomInt(0, 59);
-  return new Date(year, month - 1, randomDay, randomHour, randomMinute);
+  const generatedDate = new Date(
+    year,
+    month - 1,
+    randomDay,
+    randomHour,
+    randomMinute
+  );
+
+  // Ensure the date doesn't exceed MAX_SEED_DATE
+  return generatedDate > MAX_SEED_DATE ? MAX_SEED_DATE : generatedDate;
 };
 
 // Unique invoice number
@@ -982,11 +1016,19 @@ const sanitizePhone = (v) => {
   return s || null;
 };
 
+// Maximum date for seed data - all transactions should be before or on this date
+const MAX_SEED_DATE = new Date("2025-11-12");
 const now = new Date();
+// Use the earlier of today or MAX_SEED_DATE
+const effectiveNow = now > MAX_SEED_DATE ? MAX_SEED_DATE : now;
 const monthsBackCount = 18; // varied months/years
 
 const monthsBack = Array.from({ length: monthsBackCount }, (_, i) => {
-  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+  const d = new Date(
+    effectiveNow.getFullYear(),
+    effectiveNow.getMonth() - i,
+    1
+  );
   return { year: d.getFullYear(), month: d.getMonth() + 1 };
 }).reverse();
 
@@ -1067,6 +1109,11 @@ const seedDatabase = async () => {
       {
         code: "customer.hardware.view",
         name: "View Customer Hardware",
+        module: "Customers",
+      },
+      {
+        code: "customer.balance-history.view",
+        name: "View Customer Balance History",
         module: "Customers",
       },
     ]);
@@ -1204,6 +1251,7 @@ const seedDatabase = async () => {
       rolePermissions.push({ roleId: roleMap["SUPER_ADMIN"], featureId: f.id })
     );
 
+    // Grant all features to ADMIN except superadmin and company management
     const adminFeatures = features.filter(
       (f) =>
         !f.code.startsWith("superadmin.") &&
@@ -1212,6 +1260,14 @@ const seedDatabase = async () => {
     adminFeatures.forEach((f) =>
       rolePermissions.push({ roleId: roleMap["ADMIN"], featureId: f.id })
     );
+
+    // Also grant balance history to agents if they need it
+    if (featureMap["customer.balance-history.view"]) {
+      rolePermissions.push({
+        roleId: roleMap["AGENT"],
+        featureId: featureMap["customer.balance-history.view"],
+      });
+    }
 
     [
       "agent.dashboard.view",
@@ -1324,7 +1380,39 @@ const seedDatabase = async () => {
       });
     }
 
+    // Update customers payload to have some inactive customers
+    const now = new Date();
+    const totalCustomers = customersPayload.length;
+
+    // Make some customers inactive (about 10%)
+    const inactiveCount = Math.floor(totalCustomers * 0.1);
+    for (let i = 0; i < inactiveCount; i++) {
+      customersPayload[i].isActive = false;
+    }
+
     const customers = await models.Customer.bulkCreate(customersPayload);
+
+    // Update some customers to be created this month (about 15%)
+    // Use raw SQL to update createdAt since Sequelize manages timestamps
+    const thisMonthCount = Math.floor(totalCustomers * 0.15);
+    const customersToUpdate = customers.slice(
+      inactiveCount,
+      inactiveCount + thisMonthCount
+    );
+    for (const customer of customersToUpdate) {
+      const randomDay = randomInt(1, now.getDate());
+      const createdAtDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        randomDay
+      );
+      await sequelize.query(
+        `UPDATE customers SET "createdAt" = :date WHERE id = :id`,
+        {
+          replacements: { date: createdAtDate, id: customer.id },
+        }
+      );
+    }
 
     // ----- Hardware mapping from embedded rows -----
     const hardwareData = [];
@@ -1349,7 +1437,35 @@ const seedDatabase = async () => {
         hw.router && hw.router.trim()
           ? hw.router.trim()
           : getRandomItem(deviceFallbackTypes);
-      const mac = (hw.mac && hw.mac.trim()) || generateMAC();
+      let mac = (hw.mac && hw.mac.trim()) || generateMAC();
+
+      // Normalize MAC address format and ensure uniqueness
+      if (mac) {
+        // Remove all non-hex characters and convert to uppercase
+        const cleanMac = mac.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+        // Reformat to standard MAC format (XX:XX:XX:XX:XX:XX)
+        if (cleanMac.length === 12) {
+          mac = `${cleanMac.slice(0, 2)}:${cleanMac.slice(
+            2,
+            4
+          )}:${cleanMac.slice(4, 6)}:${cleanMac.slice(6, 8)}:${cleanMac.slice(
+            8,
+            10
+          )}:${cleanMac.slice(10, 12)}`;
+        } else {
+          // If format is invalid, generate a new one
+          mac = generateMAC();
+        }
+      } else {
+        mac = generateMAC();
+      }
+
+      // Ensure uniqueness
+      if (usedMACs.has(mac)) {
+        mac = generateMAC();
+      }
+      usedMACs.add(mac);
+
       const ipAddress =
         (hw.ip && hw.ip.trim()) ||
         `192.168.${randomInt(0, 254)}.${randomInt(2, 254)}`;
@@ -1398,25 +1514,206 @@ const seedDatabase = async () => {
       }
     }
 
-    const paymentsData = [];
-    const invoiceItemsData = [];
-    const transactionsData = [];
-    const pendingChargesData = [];
+    // Track customer balances for sequential transaction creation
+    const customerBalances = new Map();
+
+    // Helper to get current balance for a customer
+    const getCustomerBalance = (customerId) => {
+      return customerBalances.get(customerId) || 0;
+    };
+
+    // Helper to update customer balance
+    const updateCustomerBalance = (customerId, newBalance) => {
+      customerBalances.set(customerId, newBalance);
+    };
 
     // Subscriptions + Invoices + Payments
-    for (const customer of customers) {
+    // Prepare renewal date categories for dashboard stats
+    // Use effectiveNow to ensure dates don't exceed MAX_SEED_DATE
+    const today = new Date(
+      effectiveNow.getFullYear(),
+      effectiveNow.getMonth(),
+      effectiveNow.getDate()
+    );
+    const currentMonthStart = new Date(
+      effectiveNow.getFullYear(),
+      effectiveNow.getMonth(),
+      1
+    );
+    const currentMonthEnd = new Date(
+      effectiveNow.getFullYear(),
+      effectiveNow.getMonth() + 1,
+      0
+    );
+    const nextMonthStart = new Date(
+      effectiveNow.getFullYear(),
+      effectiveNow.getMonth() + 1,
+      1
+    );
+
+    let renewalIndex = 0;
+    const renewalCategories = {
+      today: [], // Renewals today
+      thisMonth: [], // Renewals this month (but not today)
+      nextMonth: [], // Renewals next month onwards
+      expired: [], // Renewals in the past
+    };
+
+    // Distribute customers into renewal categories
+    for (let i = 0; i < customers.length; i++) {
+      const rand = Math.random();
+      if (rand < 0.1) {
+        renewalCategories.today.push(i);
+      } else if (rand < 0.3) {
+        renewalCategories.thisMonth.push(i);
+      } else if (rand < 0.6) {
+        renewalCategories.nextMonth.push(i);
+      } else {
+        renewalCategories.expired.push(i);
+      }
+    }
+
+    for (let idx = 0; idx < customers.length; idx++) {
+      const customer = customers[idx];
       const plan = getRandomItem(plans);
+
+      // Determine renewal dates based on category
+      let nextRenewalDate;
+      let lastRenewalDate;
+      const startDate = new Date(
+        effectiveNow.getFullYear(),
+        effectiveNow.getMonth() - randomInt(1, 6),
+        randomInt(1, 15)
+      );
+      // Ensure startDate doesn't exceed MAX_SEED_DATE
+      if (startDate > MAX_SEED_DATE) {
+        startDate.setTime(MAX_SEED_DATE.getTime());
+      }
+
+      if (renewalCategories.today.includes(idx)) {
+        // Renewal today
+        nextRenewalDate = today;
+        lastRenewalDate = new Date(
+          today.getFullYear(),
+          today.getMonth() - 1,
+          today.getDate()
+        );
+      } else if (renewalCategories.thisMonth.includes(idx)) {
+        // Renewal this month (but not today)
+        const maxDay = Math.min(
+          currentMonthEnd.getDate(),
+          MAX_SEED_DATE.getDate()
+        );
+        const renewalDay = randomInt(1, maxDay);
+        if (renewalDay < today.getDate()) {
+          nextRenewalDate = new Date(
+            effectiveNow.getFullYear(),
+            effectiveNow.getMonth(),
+            renewalDay
+          );
+          lastRenewalDate = new Date(
+            effectiveNow.getFullYear(),
+            effectiveNow.getMonth() - 1,
+            renewalDay
+          );
+        } else {
+          nextRenewalDate = new Date(
+            effectiveNow.getFullYear(),
+            effectiveNow.getMonth(),
+            renewalDay
+          );
+          lastRenewalDate = new Date(
+            effectiveNow.getFullYear(),
+            effectiveNow.getMonth() - 1,
+            renewalDay
+          );
+        }
+      } else if (renewalCategories.nextMonth.includes(idx)) {
+        // Renewal next month onwards - but cap at MAX_SEED_DATE
+        const monthsAhead = randomInt(1, 3);
+        const renewalDay = randomInt(1, 15);
+        nextRenewalDate = new Date(
+          effectiveNow.getFullYear(),
+          effectiveNow.getMonth() + monthsAhead,
+          renewalDay
+        );
+        // Cap at MAX_SEED_DATE
+        if (nextRenewalDate > MAX_SEED_DATE) {
+          nextRenewalDate = new Date(MAX_SEED_DATE);
+        }
+        lastRenewalDate = new Date(
+          effectiveNow.getFullYear(),
+          effectiveNow.getMonth() + monthsAhead - 1,
+          renewalDay
+        );
+        // Cap at MAX_SEED_DATE
+        if (lastRenewalDate > MAX_SEED_DATE) {
+          lastRenewalDate = new Date(MAX_SEED_DATE);
+          lastRenewalDate.setMonth(lastRenewalDate.getMonth() - 1);
+        }
+      } else {
+        // Expired renewal (past date)
+        const daysPast = randomInt(1, 30);
+        nextRenewalDate = new Date(today);
+        nextRenewalDate.setDate(nextRenewalDate.getDate() - daysPast);
+        lastRenewalDate = new Date(nextRenewalDate);
+        lastRenewalDate.setMonth(lastRenewalDate.getMonth() - 1);
+      }
+
+      // Ensure both dates don't exceed MAX_SEED_DATE
+      if (nextRenewalDate > MAX_SEED_DATE) {
+        nextRenewalDate = new Date(MAX_SEED_DATE);
+      }
+      if (lastRenewalDate > MAX_SEED_DATE) {
+        lastRenewalDate = new Date(MAX_SEED_DATE);
+        lastRenewalDate.setMonth(lastRenewalDate.getMonth() - 1);
+      }
+
       const createdSub = await models.Subscription.create({
         companyId: company.id,
         customerId: customer.id,
         planId: plan.id,
-        startDate: new Date(),
+        startDate: startDate,
+        nextRenewalDate: nextRenewalDate.toISOString().split("T")[0],
+        lastRenewalDate: lastRenewalDate
+          ? lastRenewalDate.toISOString().split("T")[0]
+          : null,
+        agreedMonthlyPrice: plan.monthlyPrice,
+        billingType: getRandomItem(["PREPAID", "POSTPAID"]),
+        billingCycle: getRandomItem(["MONTHLY", "DAILY"]),
+        billingCycleValue: 1,
+        additionalCharge: Math.random() > 0.7 ? randomInt(100, 500) : 0,
+        discount: Math.random() > 0.8 ? randomInt(50, 200) : 0,
+        status: customer.isActive
+          ? "ACTIVE"
+          : Math.random() > 0.5
+          ? "PAUSED"
+          : "CANCELLED",
       });
 
       for (const { year, month } of monthsBack) {
+        // Skip months that are after November 2025
+        if (year > 2025 || (year === 2025 && month > 11)) {
+          continue;
+        }
+
         const periodStart = new Date(year, month - 1, 1);
-        const periodEnd = new Date(year, month, 0);
-        const dueDate = new Date(year, month - 1, randomInt(10, 22));
+        let periodEnd = new Date(year, month, 0);
+        // If this is November 2025, cap periodEnd at Nov 12
+        if (year === 2025 && month === 11) {
+          periodEnd = new Date(2025, 10, 12);
+        }
+        // Ensure periodEnd doesn't exceed MAX_SEED_DATE
+        if (periodEnd > MAX_SEED_DATE) {
+          periodEnd = new Date(MAX_SEED_DATE);
+        }
+
+        const maxDueDay = year === 2025 && month === 11 ? 12 : 22;
+        const dueDate = new Date(year, month - 1, randomInt(10, maxDueDay));
+        // Cap dueDate at MAX_SEED_DATE
+        if (dueDate > MAX_SEED_DATE) {
+          dueDate.setTime(MAX_SEED_DATE.getTime());
+        }
 
         const amount = plan.monthlyPrice; // integer
         const tax = Math.round(amount * 0.18);
@@ -1424,45 +1721,30 @@ const seedDatabase = async () => {
 
         const isPaid = Math.random() > 0.35;
 
-        const invoiceDate = new Date(year, month - 1, 1);
+        let invoiceDate = new Date(year, month - 1, 1);
+        // Cap invoiceDate at MAX_SEED_DATE
+        if (invoiceDate > MAX_SEED_DATE) {
+          invoiceDate = new Date(MAX_SEED_DATE);
+        }
         const invoiceNumber = generateInvoiceNumber(
           company.id,
           customer.id,
           invoiceDate
         );
 
-        const createdInvoice = await models.Invoice.create({
-          companyId: company.id,
-          customerId: customer.id,
-          subscriptionId: createdSub.id,
-          periodStart,
-          periodEnd,
-          subtotal: amount,
-          taxAmount: tax,
-          discounts: 0,
-          amountTotal: total,
-          dueDate,
-          status: isPaid
-            ? "PAID"
-            : dueDate < new Date()
-            ? "OVERDUE"
-            : "PENDING",
-          invoiceNumber,
-          notes: `Monthly internet service for ${periodStart.toLocaleDateString()} - ${periodEnd.toLocaleDateString()}`,
-          isActive: true,
-        });
+        // Build invoice items array
+        const invoiceItems = [
+          {
+            name: `${plan.name} - Monthly Service`,
+            itemType: "INTERNET_SERVICE",
+            description: `${plan.name} - Monthly Service`,
+            quantity: 1,
+            unitPrice: amount,
+            totalAmount: amount,
+          },
+        ];
 
-        // Invoice items
-        invoiceItemsData.push({
-          invoiceId: createdInvoice.id,
-          itemType: "INTERNET_SERVICE",
-          description: `${plan.name} - Monthly Service`,
-          quantity: 1,
-          unitPrice: amount,
-          totalAmount: amount,
-          isActive: true,
-        });
-
+        let additionalAmount = 0;
         if (Math.random() > 0.6) {
           const additionalServices = [
             {
@@ -1487,151 +1769,297 @@ const seedDatabase = async () => {
             },
           ];
           const additionalService = getRandomItem(additionalServices);
-          invoiceItemsData.push({
-            invoiceId: createdInvoice.id,
+          additionalAmount = additionalService.price;
+          invoiceItems.push({
+            name: additionalService.description,
             itemType: additionalService.type,
             description: additionalService.description,
             quantity: 1,
             unitPrice: additionalService.price,
             totalAmount: additionalService.price,
-            isActive: true,
           });
         }
 
         if (Math.random() > 0.7) {
-          invoiceItemsData.push({
-            invoiceId: createdInvoice.id,
+          const lateFee = 200;
+          additionalAmount += lateFee;
+          invoiceItems.push({
+            name: "Late Payment Fee",
             itemType: "LATE_FEE",
             description: "Late Payment Fee",
             quantity: 1,
-            unitPrice: 200,
-            totalAmount: 200,
-            isActive: true,
+            unitPrice: lateFee,
+            totalAmount: lateFee,
           });
         }
 
-        if (isPaid) {
-          const collectionDate = generateRandomDateInMonth(year, month);
-          paymentsData.push({
-            companyId: company.id,
-            invoiceId: createdInvoice.id,
-            collectedBy: customer.assignedAgentId,
-            collectedAt: collectionDate,
-            method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
-            amount: total,
-            comments: `Payment collected for invoice ${invoiceNumber}`,
-          });
+        const finalTotal = total + additionalAmount;
+        const prevBalance = getCustomerBalance(customer.id);
+        const balanceBefore = prevBalance;
+        const balanceAfter = balanceBefore + finalTotal;
 
-          transactionsData.push({
-            companyId: company.id,
-            customerId: customer.id,
-            type: "PAYMENT",
-            amount: total,
-            balanceBefore: 0,
-            balanceAfter: 0,
-            description: `Payment received for invoice ${invoiceNumber}`,
-            referenceId: createdInvoice.id,
-            referenceType: "invoice",
-            transactionDate: collectionDate,
-            recordedDate: collectionDate,
-            createdBy: customer.assignedAgentId,
-            isActive: true,
-          });
-        } else {
-          transactionsData.push({
-            companyId: company.id,
-            customerId: customer.id,
-            type: "BILL_GENERATION",
-            amount: total,
-            balanceBefore: 0,
-            balanceAfter: total,
-            description: `Bill generated for invoice ${invoiceNumber}`,
-            referenceId: createdInvoice.id,
-            referenceType: "invoice",
-            transactionDate: invoiceDate,
-            recordedDate: invoiceDate,
-            createdBy: getRandomItem(admins).id,
-            isActive: true,
-          });
-        }
-
-        // Add some balance adjustments and pending charge transactions
-        if (Math.random() > 0.8) {
-          const adjustmentTypes = [
-            "BALANCE_ADJUSTMENT",
-            "PENDING_CHARGE_ADDED",
-          ];
-          const adjustmentType = getRandomItem(adjustmentTypes);
-          const adjustmentAmount = randomInt(100, 500);
-
-          transactionsData.push({
-            companyId: company.id,
-            customerId: customer.id,
-            type: adjustmentType,
-            amount: adjustmentAmount,
-            balanceBefore: total,
-            balanceAfter:
-              adjustmentType === "BALANCE_ADJUSTMENT"
-                ? total - adjustmentAmount
-                : total + adjustmentAmount,
-            description:
-              adjustmentType === "BALANCE_ADJUSTMENT"
-                ? `Balance adjustment of ₹${adjustmentAmount} for ${customer.fullName}`
-                : `Pending charge added of ₹${adjustmentAmount} for ${customer.fullName}`,
-            referenceId: null,
-            referenceType: "adjustment",
-            transactionDate: new Date(year, month - 1, randomInt(15, 28)),
-            recordedDate: new Date(year, month - 1, randomInt(15, 28)),
-            createdBy: getRandomItem(admins).id,
-            isActive: true,
-          });
-        }
-      }
-
-      // Pending charges
-      if (Math.random() > 0.5) {
-        const pendingChargeTypes = [
-          "ROUTER_INSTALLATION",
-          "EQUIPMENT_CHARGE",
-          "LATE_FEE",
-          "ADJUSTMENT",
-          "OTHER",
-        ];
-        const chargeType = getRandomItem(pendingChargeTypes);
-        const chargeAmounts = {
-          ROUTER_INSTALLATION: randomInt(500, 1500),
-          EQUIPMENT_CHARGE: randomInt(1000, 3000),
-          LATE_FEE: randomInt(100, 500),
-          ADJUSTMENT: randomInt(200, 1000),
-          OTHER: randomInt(100, 1000),
-        };
-        pendingChargesData.push({
+        // Create transaction for invoice first
+        const invoiceTransaction = await models.Transaction.create({
           companyId: company.id,
           customerId: customer.id,
-          chargeType,
-          description: `${chargeType
-            .replace(/_/g, " ")
-            .toLowerCase()} charge for ${customer.fullName}`,
-          amount: chargeAmounts[chargeType],
-          isApplied: Math.random() > 0.6,
-          appliedToInvoiceId: null,
-          appliedDate: null,
+          type: "INVOICE",
+          direction: "DEBIT",
+          amount: finalTotal,
+          balanceBefore: balanceBefore,
+          balanceAfter: balanceAfter,
+          description: `Subscription invoice ${
+            periodStart.toISOString().split("T")[0]
+          } to ${periodEnd.toISOString().split("T")[0]}`,
+          referenceType: "invoice",
+          transactionDate: invoiceDate,
           createdBy: getRandomItem(admins).id,
           isActive: true,
         });
+
+        // Create invoice document
+        const createdInvoice = await models.Invoice.create({
+          transactionId: invoiceTransaction.id,
+          invoiceNumber: invoiceNumber,
+          type: "SUBSCRIPTION",
+          companyId: company.id,
+          customerId: customer.id,
+          subscriptionId: createdSub.id,
+          periodStart: periodStart.toISOString().split("T")[0],
+          periodEnd: periodEnd.toISOString().split("T")[0],
+          subtotal: amount + additionalAmount,
+          taxAmount: tax,
+          discounts: 0,
+          amountTotal: finalTotal,
+          prevBalance: prevBalance > 0 ? prevBalance : null,
+          items: invoiceItems,
+          dueDate: dueDate.toISOString().split("T")[0],
+          isActive: true,
+        });
+
+        // Update transaction reference
+        await invoiceTransaction.update({ referenceId: createdInvoice.id });
+
+        // Update customer balance
+        updateCustomerBalance(customer.id, balanceAfter);
+
+        if (isPaid) {
+          let collectionDate = generateRandomDateInMonth(year, month);
+          // Ensure collectionDate doesn't exceed MAX_SEED_DATE
+          if (collectionDate > MAX_SEED_DATE) {
+            collectionDate = new Date(MAX_SEED_DATE);
+          }
+          const paymentBalanceBefore = getCustomerBalance(customer.id);
+          const paymentBalanceAfter = Math.max(
+            0,
+            paymentBalanceBefore - finalTotal
+          );
+
+          // Create transaction for payment first
+          const paymentTransaction = await models.Transaction.create({
+            companyId: company.id,
+            customerId: customer.id,
+            type: "PAYMENT",
+            direction: "CREDIT",
+            amount: finalTotal,
+            balanceBefore: paymentBalanceBefore,
+            balanceAfter: paymentBalanceAfter,
+            description: `Payment of ₹${finalTotal} via ${getRandomItem([
+              "UPI",
+              "CASH",
+              "BHIM",
+              "PhonePe",
+              "CARD",
+            ])}`,
+            referenceType: "payment",
+            transactionDate: collectionDate,
+            createdBy: customer.assignedAgentId,
+            isActive: true,
+          });
+
+          // Create payment document
+          const payment = await models.Payment.create({
+            transactionId: paymentTransaction.id,
+            paymentNumber: generatePaymentNumber(),
+            companyId: company.id,
+            customerId: customer.id,
+            invoiceId: createdInvoice.id,
+            amount: finalTotal,
+            discount: 0,
+            method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
+            collectedBy: customer.assignedAgentId,
+            collectedAt: collectionDate,
+            comments: `Payment collected for invoice ${invoiceNumber}`,
+            isActive: true,
+          });
+
+          // Update transaction reference
+          await paymentTransaction.update({ referenceId: payment.id });
+
+          // Update customer balance
+          updateCustomerBalance(customer.id, paymentBalanceAfter);
+        }
+
+        // Add some balance adjustments and add-on bills
+        if (Math.random() > 0.8) {
+          const shouldAdjust = Math.random() > 0.5;
+
+          if (shouldAdjust) {
+            // Balance adjustment
+            const adjustmentAmount = randomInt(100, 500);
+            const currentBalance = getCustomerBalance(customer.id);
+            const newBalance = currentBalance - adjustmentAmount; // Credit adjustment
+
+            let adjustmentDate = new Date(year, month - 1, randomInt(15, 28));
+            // Cap adjustment date at MAX_SEED_DATE
+            if (adjustmentDate > MAX_SEED_DATE) {
+              adjustmentDate = new Date(MAX_SEED_DATE);
+            }
+
+            const adjustmentTransaction = await models.Transaction.create({
+              companyId: company.id,
+              customerId: customer.id,
+              type: "BALANCE_ADJUSTMENT",
+              direction: "CREDIT",
+              amount: adjustmentAmount,
+              balanceBefore: currentBalance,
+              balanceAfter: Math.max(0, newBalance),
+              description: `Balance adjustment of ₹${adjustmentAmount} for ${customer.fullName}`,
+              referenceType: "invoice",
+              transactionDate: adjustmentDate,
+              createdBy: getRandomItem(admins).id,
+              isActive: true,
+            });
+
+            const adjustmentInvoice = await models.Invoice.create({
+              transactionId: adjustmentTransaction.id,
+              invoiceNumber: generateInvoiceNumber(
+                company.id,
+                customer.id,
+                adjustmentDate
+              ),
+              type: "ADJUSTED",
+              companyId: company.id,
+              customerId: customer.id,
+              subscriptionId: null,
+              periodStart: null,
+              periodEnd: null,
+              subtotal: 0,
+              taxAmount: 0,
+              discounts: 0,
+              amountTotal: adjustmentAmount,
+              prevBalance: currentBalance,
+              items: [
+                {
+                  name: "Balance Adjustment",
+                  itemType: "ADJUSTMENT",
+                  description: `Balance adjustment of ₹${adjustmentAmount}`,
+                  quantity: 1,
+                  unitPrice: -adjustmentAmount,
+                  totalAmount: -adjustmentAmount,
+                },
+              ],
+              dueDate: adjustmentDate.toISOString().split("T")[0],
+              isActive: true,
+            });
+
+            await adjustmentTransaction.update({
+              referenceId: adjustmentInvoice.id,
+            });
+            updateCustomerBalance(customer.id, Math.max(0, newBalance));
+          } else {
+            // Add-on bill
+            const addOnTypes = [
+              {
+                type: "ROUTER_INSTALLATION",
+                description: "Router Installation Service",
+                price: randomInt(500, 1500),
+              },
+              {
+                type: "EQUIPMENT_CHARGE",
+                description: "Equipment Charge",
+                price: randomInt(1000, 3000),
+              },
+              {
+                type: "LATE_FEE",
+                description: "Late Payment Fee",
+                price: randomInt(100, 500),
+              },
+              {
+                type: "OTHER",
+                description: "Additional Service Fee",
+                price: randomInt(100, 1000),
+              },
+            ];
+            const addOn = getRandomItem(addOnTypes);
+            const currentBalance = getCustomerBalance(customer.id);
+            const newBalance = currentBalance + addOn.price;
+
+            let addOnDate = new Date(year, month - 1, randomInt(15, 28));
+            // Cap add-on date at MAX_SEED_DATE
+            if (addOnDate > MAX_SEED_DATE) {
+              addOnDate = new Date(MAX_SEED_DATE);
+            }
+
+            const addOnTransaction = await models.Transaction.create({
+              companyId: company.id,
+              customerId: customer.id,
+              type: "ADD_ON_BILL",
+              direction: "DEBIT",
+              amount: addOn.price,
+              balanceBefore: currentBalance,
+              balanceAfter: newBalance,
+              description: `Add on bill: ${addOn.description}`,
+              referenceType: "invoice",
+              transactionDate: addOnDate,
+              createdBy: getRandomItem(admins).id,
+              isActive: true,
+            });
+
+            const addOnInvoice = await models.Invoice.create({
+              transactionId: addOnTransaction.id,
+              invoiceNumber: generateInvoiceNumber(
+                company.id,
+                customer.id,
+                addOnDate
+              ),
+              type: "ADJUSTED",
+              companyId: company.id,
+              customerId: customer.id,
+              subscriptionId: null,
+              periodStart: null,
+              periodEnd: null,
+              subtotal: addOn.price,
+              taxAmount: 0,
+              discounts: 0,
+              amountTotal: addOn.price,
+              prevBalance: null,
+              items: [
+                {
+                  name: addOn.description,
+                  itemType: addOn.type,
+                  description: addOn.description,
+                  quantity: 1,
+                  unitPrice: addOn.price,
+                  totalAmount: addOn.price,
+                },
+              ],
+              dueDate: addOnDate.toISOString().split("T")[0],
+              isActive: true,
+            });
+
+            await addOnTransaction.update({ referenceId: addOnInvoice.id });
+            updateCustomerBalance(customer.id, newBalance);
+          }
+        }
       }
     }
 
     await models.CustomerHardware.bulkCreate(hardwareData);
-    await models.InvoiceItem.bulkCreate(invoiceItemsData);
-    await models.Payment.bulkCreate(paymentsData);
-    await models.Transaction.bulkCreate(transactionsData);
-    await models.PendingCharge.bulkCreate(pendingChargesData);
 
     // --- Additional current-month collections (varied dates) ---
     console.log("Adding additional current-month collection data...");
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth() + 1;
+    const currentYear = effectiveNow.getFullYear();
+    const currentMonth = effectiveNow.getMonth() + 1;
 
     const extraCustomers = customers.slice(0, Math.min(15, customers.length));
     for (const customer of extraCustomers) {
@@ -1639,90 +2067,449 @@ const seedDatabase = async () => {
       const subscription = await models.Subscription.findOne({
         where: { customerId: customer.id },
       });
-      const days = [1, 5, 10, 15, 20, 25, 28, 30].filter(
-        (d) => new Date(currentYear, currentMonth - 1, d) <= now
-      );
+      const days = [1, 5, 10, 15, 20, 25, 28, 30].filter((d) => {
+        const date = new Date(currentYear, currentMonth - 1, d);
+        return date <= MAX_SEED_DATE;
+      });
 
       for (const day of days) {
         if (Math.random() > 0.4) {
-          const periodStart = new Date(currentYear, currentMonth - 1, 1);
-          const periodEnd = new Date(currentYear, currentMonth, 0);
-          const dueDate = new Date(currentYear, currentMonth - 1, 15);
+          let periodStart = new Date(currentYear, currentMonth - 1, 1);
+          let periodEnd = new Date(currentYear, currentMonth, 0);
+          // If this is November 2025, cap periodEnd at Nov 12
+          if (currentYear === 2025 && currentMonth === 11) {
+            periodEnd = new Date(2025, 10, 12);
+          }
+          // Ensure periodEnd doesn't exceed MAX_SEED_DATE
+          if (periodEnd > MAX_SEED_DATE) {
+            periodEnd = new Date(MAX_SEED_DATE);
+          }
+
+          let dueDate = new Date(currentYear, currentMonth - 1, 15);
+          // Cap dueDate at MAX_SEED_DATE
+          if (dueDate > MAX_SEED_DATE) {
+            dueDate = new Date(MAX_SEED_DATE);
+          }
 
           const amount = plan.monthlyPrice;
           const tax = Math.round(amount * 0.18);
           const total = Math.round(amount + tax);
 
-          const invoiceDate = new Date(currentYear, currentMonth - 1, 1);
+          let invoiceDate = new Date(currentYear, currentMonth - 1, 1);
+          // Cap invoiceDate at MAX_SEED_DATE
+          if (invoiceDate > MAX_SEED_DATE) {
+            invoiceDate = new Date(MAX_SEED_DATE);
+          }
           const invoiceNumber = generateInvoiceNumber(
             company.id,
             customer.id,
             invoiceDate
           );
 
+          const prevBalance = getCustomerBalance(customer.id);
+          const balanceBefore = prevBalance;
+          const balanceAfter = balanceBefore + total;
+
+          // Create transaction for invoice first
+          const invoiceTransaction = await models.Transaction.create({
+            companyId: company.id,
+            customerId: customer.id,
+            type: "INVOICE",
+            direction: "DEBIT",
+            amount: total,
+            balanceBefore: balanceBefore,
+            balanceAfter: balanceAfter,
+            description: `Subscription invoice ${
+              periodStart.toISOString().split("T")[0]
+            } to ${periodEnd.toISOString().split("T")[0]}`,
+            referenceType: "invoice",
+            transactionDate: invoiceDate,
+            createdBy: getRandomItem(admins).id,
+            isActive: true,
+          });
+
+          // Create invoice document
           const createdInvoice = await models.Invoice.create({
+            transactionId: invoiceTransaction.id,
+            invoiceNumber: invoiceNumber,
+            type: "SUBSCRIPTION",
             companyId: company.id,
             customerId: customer.id,
             subscriptionId: subscription.id,
-            periodStart,
-            periodEnd,
+            periodStart: periodStart.toISOString().split("T")[0],
+            periodEnd: periodEnd.toISOString().split("T")[0],
             subtotal: amount,
             taxAmount: tax,
             discounts: 0,
             amountTotal: total,
-            dueDate,
-            status: "PAID",
-            invoiceNumber,
-            notes: `Additional ${periodStart.toLocaleString("default", {
-              month: "long",
-            })} invoice for ${customer.fullName}`,
+            prevBalance: prevBalance > 0 ? prevBalance : null,
+            items: [
+              {
+                name: `${plan.name} - Monthly Service`,
+                itemType: "INTERNET_SERVICE",
+                description: `${plan.name} - Monthly Service`,
+                quantity: 1,
+                unitPrice: amount,
+                totalAmount: amount,
+              },
+            ],
+            dueDate: dueDate.toISOString().split("T")[0],
             isActive: true,
           });
 
-          await models.InvoiceItem.create({
-            invoiceId: createdInvoice.id,
-            itemType: "INTERNET_SERVICE",
-            description: `${plan.name} - Monthly Service`,
-            quantity: 1,
-            unitPrice: amount,
-            totalAmount: amount,
-            isActive: true,
-          });
+          await invoiceTransaction.update({ referenceId: createdInvoice.id });
+          updateCustomerBalance(customer.id, balanceAfter);
 
-          const collectionDate = new Date(
+          let collectionDate = new Date(
             currentYear,
             currentMonth - 1,
             day,
             randomInt(9, 18),
             randomInt(0, 59)
           );
-          await models.Payment.create({
-            companyId: company.id,
-            invoiceId: createdInvoice.id,
-            collectedBy: customer.assignedAgentId,
-            collectedAt: collectionDate,
-            method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
-            amount: total,
-            comments: `Additional ${periodStart.toLocaleString("default", {
-              month: "long",
-            })} payment for invoice ${invoiceNumber}`,
-          });
+          // Cap collectionDate at MAX_SEED_DATE
+          if (collectionDate > MAX_SEED_DATE) {
+            collectionDate = new Date(MAX_SEED_DATE);
+          }
 
-          await models.Transaction.create({
+          const paymentBalanceBefore = getCustomerBalance(customer.id);
+          const paymentBalanceAfter = Math.max(0, paymentBalanceBefore - total);
+
+          // Create transaction for payment first
+          const paymentTransaction = await models.Transaction.create({
             companyId: company.id,
             customerId: customer.id,
             type: "PAYMENT",
+            direction: "CREDIT",
             amount: total,
-            balanceBefore: 0,
-            balanceAfter: 0,
-            description: `Payment received for invoice ${invoiceNumber}`,
-            referenceId: createdInvoice.id,
-            referenceType: "invoice",
+            balanceBefore: paymentBalanceBefore,
+            balanceAfter: paymentBalanceAfter,
+            description: `Payment of ₹${total} via ${getRandomItem([
+              "UPI",
+              "CASH",
+              "BHIM",
+              "PhonePe",
+              "CARD",
+            ])}`,
+            referenceType: "payment",
             transactionDate: collectionDate,
-            recordedDate: collectionDate,
             createdBy: customer.assignedAgentId,
             isActive: true,
           });
+
+          // Create payment document
+          const payment = await models.Payment.create({
+            transactionId: paymentTransaction.id,
+            paymentNumber: generatePaymentNumber(),
+            companyId: company.id,
+            customerId: customer.id,
+            invoiceId: createdInvoice.id,
+            amount: total,
+            discount: 0,
+            method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
+            collectedBy: customer.assignedAgentId,
+            collectedAt: collectionDate,
+            comments: `Additional ${periodStart.toLocaleString("default", {
+              month: "long",
+            })} payment for invoice ${invoiceNumber}`,
+            isActive: true,
+          });
+
+          await paymentTransaction.update({ referenceId: payment.id });
+          updateCustomerBalance(customer.id, paymentBalanceAfter);
+        }
+      }
+    }
+
+    // --- Add today's payments for dashboard stats ---
+    console.log("Adding today's payment data...");
+    const todayCustomers = customers.slice(0, Math.min(10, customers.length));
+    for (const customer of todayCustomers) {
+      if (Math.random() > 0.5) {
+        const subscription = await models.Subscription.findOne({
+          where: { customerId: customer.id },
+        });
+        if (!subscription) continue;
+
+        const plan = await models.Plan.findByPk(subscription.planId);
+        if (!plan) continue;
+
+        // Create a pending invoice first
+        const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        const dueDate = new Date(now.getFullYear(), now.getMonth(), 15);
+
+        const amount = plan.monthlyPrice;
+        const tax = Math.round(amount * 0.18);
+        const total = Math.round(amount + tax);
+
+        const invoiceDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        const invoiceNumber = generateInvoiceNumber(
+          company.id,
+          customer.id,
+          invoiceDate
+        );
+
+        const prevBalance = getCustomerBalance(customer.id);
+        const balanceBefore = prevBalance;
+        const balanceAfter = balanceBefore + total;
+
+        // Create transaction for invoice first
+        const invoiceTransaction = await models.Transaction.create({
+          companyId: company.id,
+          customerId: customer.id,
+          type: "INVOICE",
+          direction: "DEBIT",
+          amount: total,
+          balanceBefore: balanceBefore,
+          balanceAfter: balanceAfter,
+          description: `Subscription invoice ${
+            periodStart.toISOString().split("T")[0]
+          } to ${periodEnd.toISOString().split("T")[0]}`,
+          referenceType: "invoice",
+          transactionDate: invoiceDate,
+          createdBy: getRandomItem(admins).id,
+          isActive: true,
+        });
+
+        // Create invoice document
+        const pendingInvoice = await models.Invoice.create({
+          transactionId: invoiceTransaction.id,
+          invoiceNumber: invoiceNumber,
+          type: "SUBSCRIPTION",
+          companyId: company.id,
+          customerId: customer.id,
+          subscriptionId: subscription.id,
+          periodStart: periodStart.toISOString().split("T")[0],
+          periodEnd: periodEnd.toISOString().split("T")[0],
+          subtotal: amount,
+          taxAmount: tax,
+          discounts: 0,
+          amountTotal: total,
+          prevBalance: prevBalance > 0 ? prevBalance : null,
+          items: [
+            {
+              name: `${plan.name} - Monthly Service`,
+              itemType: "INTERNET_SERVICE",
+              description: `${plan.name} - Monthly Service`,
+              quantity: 1,
+              unitPrice: amount,
+              totalAmount: amount,
+            },
+          ],
+          dueDate: dueDate.toISOString().split("T")[0],
+          isActive: true,
+        });
+
+        await invoiceTransaction.update({ referenceId: pendingInvoice.id });
+        updateCustomerBalance(customer.id, balanceAfter);
+
+        // Create payment for today (some invoices will be paid, some remain pending)
+        if (Math.random() > 0.4) {
+          const todayHour = randomInt(9, 18);
+          const todayMinute = randomInt(0, 59);
+          const todayPaymentDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+            todayHour,
+            todayMinute
+          );
+
+          const paymentBalanceBefore = getCustomerBalance(customer.id);
+          const paymentBalanceAfter = Math.max(0, paymentBalanceBefore - total);
+
+          // Create transaction for payment first
+          const paymentTransaction = await models.Transaction.create({
+            companyId: company.id,
+            customerId: customer.id,
+            type: "PAYMENT",
+            direction: "CREDIT",
+            amount: total,
+            balanceBefore: paymentBalanceBefore,
+            balanceAfter: paymentBalanceAfter,
+            description: `Payment of ₹${total} via ${getRandomItem([
+              "UPI",
+              "CASH",
+              "BHIM",
+              "PhonePe",
+              "CARD",
+            ])}`,
+            referenceType: "payment",
+            transactionDate: todayPaymentDate,
+            createdBy: customer.assignedAgentId,
+            isActive: true,
+          });
+
+          // Create payment document
+          const payment = await models.Payment.create({
+            transactionId: paymentTransaction.id,
+            paymentNumber: generatePaymentNumber(),
+            companyId: company.id,
+            customerId: customer.id,
+            invoiceId: pendingInvoice.id,
+            amount: total,
+            discount: 0,
+            method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
+            collectedBy: customer.assignedAgentId,
+            collectedAt: todayPaymentDate,
+            comments: `Payment collected today for invoice ${invoiceNumber}`,
+            isActive: true,
+          });
+
+          await paymentTransaction.update({ referenceId: payment.id });
+          updateCustomerBalance(customer.id, paymentBalanceAfter);
+        }
+      }
+    }
+
+    // --- Ensure we have some pending invoices for pendingAmount calculation ---
+    console.log("Adding pending invoices...");
+    const todayForPending = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+    const pendingCustomers = customers.slice(
+      10,
+      Math.min(25, customers.length)
+    );
+    for (const customer of pendingCustomers) {
+      if (Math.random() > 0.6) {
+        const subscription = await models.Subscription.findOne({
+          where: { customerId: customer.id },
+        });
+        if (!subscription) continue;
+
+        const plan = await models.Plan.findByPk(subscription.planId);
+        if (!plan) continue;
+
+        // Create pending/partially paid invoices
+        const periodStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+        const dueDate = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+
+        const amount = plan.monthlyPrice;
+        const tax = Math.round(amount * 0.18);
+        const total = Math.round(amount + tax);
+
+        const invoiceDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const invoiceNumber = generateInvoiceNumber(
+          company.id,
+          customer.id,
+          invoiceDate
+        );
+
+        const prevBalance = getCustomerBalance(customer.id);
+        const balanceBefore = prevBalance;
+        const balanceAfter = balanceBefore + total;
+
+        // Create transaction for invoice first
+        const invoiceTransaction = await models.Transaction.create({
+          companyId: company.id,
+          customerId: customer.id,
+          type: "INVOICE",
+          direction: "DEBIT",
+          amount: total,
+          balanceBefore: balanceBefore,
+          balanceAfter: balanceAfter,
+          description: `Subscription invoice ${
+            periodStart.toISOString().split("T")[0]
+          } to ${periodEnd.toISOString().split("T")[0]}`,
+          referenceType: "invoice",
+          transactionDate: invoiceDate,
+          createdBy: getRandomItem(admins).id,
+          isActive: true,
+        });
+
+        // Create invoice document
+        const pendingInvoice = await models.Invoice.create({
+          transactionId: invoiceTransaction.id,
+          invoiceNumber: invoiceNumber,
+          type: "SUBSCRIPTION",
+          companyId: company.id,
+          customerId: customer.id,
+          subscriptionId: subscription.id,
+          periodStart: periodStart.toISOString().split("T")[0],
+          periodEnd: periodEnd.toISOString().split("T")[0],
+          subtotal: amount,
+          taxAmount: tax,
+          discounts: 0,
+          amountTotal: total,
+          prevBalance: prevBalance > 0 ? prevBalance : null,
+          items: [
+            {
+              name: `${plan.name} - Monthly Service`,
+              itemType: "INTERNET_SERVICE",
+              description: `${plan.name} - Monthly Service`,
+              quantity: 1,
+              unitPrice: amount,
+              totalAmount: amount,
+            },
+          ],
+          dueDate: dueDate.toISOString().split("T")[0],
+          isActive: true,
+        });
+
+        await invoiceTransaction.update({ referenceId: pendingInvoice.id });
+        updateCustomerBalance(customer.id, balanceAfter);
+
+        const isPartiallyPaid = Math.random() > 0.5;
+        const paymentAmount = isPartiallyPaid ? Math.floor(total * 0.5) : 0;
+
+        if (isPartiallyPaid) {
+          const paymentDate = new Date(
+            now.getFullYear(),
+            now.getMonth() - 1,
+            randomInt(16, 25)
+          );
+
+          const paymentBalanceBefore = getCustomerBalance(customer.id);
+          const paymentBalanceAfter = Math.max(
+            0,
+            paymentBalanceBefore - paymentAmount
+          );
+
+          // Create transaction for payment first
+          const paymentTransaction = await models.Transaction.create({
+            companyId: company.id,
+            customerId: customer.id,
+            type: "PAYMENT",
+            direction: "CREDIT",
+            amount: paymentAmount,
+            balanceBefore: paymentBalanceBefore,
+            balanceAfter: paymentBalanceAfter,
+            description: `Payment of ₹${paymentAmount} via ${getRandomItem([
+              "UPI",
+              "CASH",
+              "BHIM",
+              "PhonePe",
+              "CARD",
+            ])}`,
+            referenceType: "payment",
+            transactionDate: paymentDate,
+            createdBy: customer.assignedAgentId,
+            isActive: true,
+          });
+
+          // Create payment document
+          const payment = await models.Payment.create({
+            transactionId: paymentTransaction.id,
+            paymentNumber: generatePaymentNumber(),
+            companyId: company.id,
+            customerId: customer.id,
+            invoiceId: pendingInvoice.id,
+            amount: paymentAmount,
+            discount: 0,
+            method: getRandomItem(["UPI", "CASH", "BHIM", "PhonePe", "CARD"]),
+            collectedBy: customer.assignedAgentId,
+            collectedAt: paymentDate,
+            comments: `Partial payment for invoice ${invoiceNumber}`,
+            isActive: true,
+          });
+
+          await paymentTransaction.update({ referenceId: payment.id });
+          updateCustomerBalance(customer.id, paymentBalanceAfter);
         }
       }
     }

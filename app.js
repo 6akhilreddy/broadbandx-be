@@ -16,7 +16,7 @@ const paymentRoutes = require("./app/routes/paymentRoutes");
 const reportRoutes = require("./app/routes/reportRoutes");
 const dashboardRoutes = require("./app/routes/dashboardRoutes");
 const transactionRoutes = require("./app/routes/transactionRoutes");
-const pendingChargeRoutes = require("./app/routes/pendingChargeRoutes");
+const complaintRoutes = require("./app/routes/complaintRoutes");
 const { swaggerUi, swaggerSpec } = require("./app/config/swagger");
 
 // Initialize Express app
@@ -50,7 +50,7 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/transactions", transactionRoutes);
-app.use("/api/pending-charges", pendingChargeRoutes);
+app.use("/api/complaints", complaintRoutes);
 
 // Start server
 const PORT = process.env.PORT || 3000;

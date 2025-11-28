@@ -42,6 +42,9 @@ const authenticate = async (req, res, next) => {
       allowedFeatures: user.Role.RolePermissions.filter(
         (rp) => rp.allowed && rp.Feature
       ).map((rp) => rp.Feature.code),
+      // Include impersonation info if present
+      impersonatedBy: decoded.impersonatedBy || null,
+      originalRoleCode: decoded.originalRoleCode || null,
     };
 
     next();

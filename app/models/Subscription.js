@@ -14,6 +14,8 @@ const Subscription = sequelize.define(
     customerId: { type: DataTypes.INTEGER, allowNull: false },
     planId: { type: DataTypes.INTEGER, allowNull: false },
     startDate: { type: DataTypes.DATEONLY, allowNull: false },
+    nextRenewalDate: { type: DataTypes.DATEONLY, allowNull: true },
+    lastRenewalDate: { type: DataTypes.DATEONLY, allowNull: true },
     agreedMonthlyPrice: { type: DataTypes.FLOAT },
     billingType: {
       type: DataTypes.ENUM("PREPAID", "POSTPAID"),

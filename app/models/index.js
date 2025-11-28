@@ -5,14 +5,14 @@ const Customer = require("./Customer");
 const CustomerHardware = require("./CustomerHardware");
 const Subscription = require("./Subscription");
 const Invoice = require("./Invoice");
-const InvoiceItem = require("./InvoiceItem");
 const Payment = require("./Payment");
 const Transaction = require("./Transaction");
-const PendingCharge = require("./PendingCharge");
 const Feature = require("./Feature");
 const Role = require("./Role");
 const RolePermission = require("./RolePermission");
 const Area = require("./Area");
+const Complaint = require("./Complaint");
+const ComplaintComment = require("./ComplaintComment");
 const sequelize = require("../config/db");
 
 const defineAssociations = require("./associations");
@@ -26,14 +26,14 @@ defineAssociations({
   CustomerHardware,
   Subscription,
   Invoice,
-  InvoiceItem,
   Payment,
   Transaction,
-  PendingCharge,
   Feature,
   Role,
   RolePermission,
   Area,
+  Complaint,
+  ComplaintComment,
 });
 
 module.exports = {
@@ -45,12 +45,12 @@ module.exports = {
   CustomerHardware,
   Subscription,
   Invoice,
-  InvoiceItem,
   Payment,
   Transaction,
-  PendingCharge,
   Feature,
   Role,
   RolePermission,
   Area,
+  Complaint,
+  ComplaintComment,
 };
