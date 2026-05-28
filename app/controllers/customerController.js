@@ -8,179 +8,329 @@ const Payment = require("../models/Payment");
 const Area = require("../models/Area");
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
+const CustomerDocument = require("../models/CustomerDocument");
 const sequelize = require("../config/db");
+const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
+const { resolveBroadbandxStorageRoot } = require("../utils/storagePaths");
 const {
   getCurrentBalance,
   generateInvoiceNumber,
   generatePaymentNumber,
 } = require("../utils/financeUtils");
+const {
+  getManagedAgentIds,
+  buildCustomerWhere,
+  isSupervisor,
+} = require("../utils/supervisorUtils");
+const {
+  normalizePlanLines,
+  createPlanSubscriptions,
+  createOpeningBalanceTransaction,
+  generateInitialInvoice,
+  renewCustomerBilling,
+  getNextBillingNumber,
+} = require("../services/customerBillingService");
 
-// Create Customer with Hardware and Subscription
+// Cross-platform, system-wide writable storage root (env override supported)
+const BROADBANDX_STORAGE_ROOT = resolveBroadbandxStorageRoot();
+
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function sanitizeFilename(name = "") {
+  return String(name)
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 180);
+}
+
+const customerDocumentsStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    try {
+      const customerId = req.params.id || req.params.customerId;
+      const dir = path.join(
+        BROADBANDX_STORAGE_ROOT,
+        "customers",
+        String(customerId)
+      );
+      ensureDir(dir);
+      cb(null, dir);
+    } catch (e) {
+      cb(e);
+    }
+  },
+  filename: (req, file, cb) => {
+    const ts = Date.now();
+    const original = sanitizeFilename(file.originalname || "file");
+    cb(null, `${ts}-${original}`);
+  },
+});
+
+const uploadCustomerDocuments = multer({
+  storage: customerDocumentsStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
+
+exports.uploadDocumentsMiddleware = uploadCustomerDocuments.array("files", 10);
+
+exports.listCustomerDocuments = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { companyId } = req.user;
+
+    const customer = await Customer.findOne({ where: { id, companyId } });
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+    const docs = await CustomerDocument.findAll({
+      where: { customerId: id, companyId, isActive: true },
+      order: [["createdAt", "DESC"]],
+    });
+
+    const data = docs.map((d) => ({
+      id: d.id,
+      displayName: d.displayName,
+      originalName: d.originalName,
+      mimeType: d.mimeType,
+      sizeBytes: d.sizeBytes,
+      uploadedBy: d.uploadedBy,
+      createdAt: d.createdAt,
+      url: `/broadbandx/${d.relativePath}`,
+    }));
+
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("List customer documents error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.uploadCustomerDocuments = async (req, res) => {
+  const dbTransaction = await sequelize.transaction();
+  try {
+    const { id } = req.params;
+    const { companyId } = req.user;
+
+    const customer = await Customer.findOne({
+      where: { id, companyId },
+      transaction: dbTransaction,
+    });
+    if (!customer) {
+      await dbTransaction.rollback();
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    const files = req.files || [];
+    if (!files.length) {
+      await dbTransaction.rollback();
+      return res.status(400).json({ error: "No files uploaded" });
+    }
+
+    const fileNames = req.body.fileNames || req.body.fileName || [];
+    const fileNamesArr = Array.isArray(fileNames) ? fileNames : [fileNames];
+
+    const created = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const storedName = f.filename;
+      const relativePath = path
+        .join("customers", String(id), storedName)
+        .replaceAll("\\\\", "/");
+
+      const displayName =
+        (fileNamesArr[i] && String(fileNamesArr[i]).trim()) || null;
+
+      const row = await CustomerDocument.create(
+        {
+          companyId,
+          customerId: parseInt(id, 10),
+          displayName,
+          originalName: f.originalname,
+          storedName,
+          mimeType: f.mimetype,
+          sizeBytes: f.size,
+          relativePath,
+          uploadedBy: req.user.id,
+        },
+        { transaction: dbTransaction }
+      );
+
+      created.push(row);
+    }
+
+    await dbTransaction.commit();
+    res.status(201).json({
+      success: true,
+      data: created.map((d) => ({
+        id: d.id,
+        displayName: d.displayName,
+        originalName: d.originalName,
+        mimeType: d.mimeType,
+        sizeBytes: d.sizeBytes,
+        createdAt: d.createdAt,
+        url: `/broadbandx/${d.relativePath}`,
+      })),
+    });
+  } catch (err) {
+    await dbTransaction.rollback();
+    console.error("Upload customer documents error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.deleteCustomerDocument = async (req, res) => {
+  const dbTransaction = await sequelize.transaction();
+  try {
+    const { id, docId } = req.params;
+    const { companyId } = req.user;
+
+    const customer = await Customer.findOne({
+      where: { id, companyId },
+      transaction: dbTransaction,
+    });
+    if (!customer) {
+      await dbTransaction.rollback();
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    const doc = await CustomerDocument.findOne({
+      where: { id: docId, customerId: id, companyId, isActive: true },
+      transaction: dbTransaction,
+    });
+
+    if (!doc) {
+      await dbTransaction.rollback();
+      return res.status(404).json({ error: "Document not found" });
+    }
+
+    await doc.update({ isActive: false }, { transaction: dbTransaction });
+
+    // Best-effort remove file from disk (do not fail request)
+    try {
+      const absPath = path.join(BROADBANDX_STORAGE_ROOT, doc.relativePath);
+      if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
+    } catch (e) {
+      console.warn("Failed to delete document file:", e.message);
+    }
+
+    await dbTransaction.commit();
+    res.json({ success: true });
+  } catch (err) {
+    await dbTransaction.rollback();
+    console.error("Delete customer document error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Preview next billing number for the company (used on Add Customer form)
+exports.previewNextBillingNumber = async (req, res) => {
+  try {
+    const companyId =
+      req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId
+        ? req.userCompanyId
+        : parseInt(req.query.companyId, 10);
+
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID is required" });
+    }
+
+    const billingNumber = await getNextBillingNumber(Customer, companyId);
+    res.json({ billingNumber });
+  } catch (err) {
+    console.error("Preview billing number error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Create Customer with Hardware, billing profile, plan lines, and initial invoice
 exports.createCustomer = async (req, res) => {
   const dbTransaction = await sequelize.transaction();
 
   try {
-    const { customer, hardware, subscription } = req.body;
-
-    // Add companyId for non-super admin users
-    if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
-      customer.companyId = req.userCompanyId;
-    }
-
-    // Handle unique fields - convert empty strings to null
-    if (customer.email === "") {
-      customer.email = null;
-    }
-    if (customer.customerCode === "") {
-      customer.customerCode = null;
-    }
-
-    // Create Customer
-    const newCustomer = await Customer.create(customer, {
-      transaction: dbTransaction,
-    });
-
-    // Create CustomerHardware
-    if (hardware) {
-      hardware.customerId = newCustomer.id;
-
-      // Handle unique fields - convert empty strings to null
-      if (hardware.macAddress === "") {
-        hardware.macAddress = null;
-      }
-
-      await CustomerHardware.create(hardware, { transaction: dbTransaction });
-    }
-
-    // Create Subscription
-    let newSubscription = null;
-    if (subscription) {
-      subscription.customerId = newCustomer.id;
-      // Add companyId for non-super admin users
-      if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
-        subscription.companyId = req.userCompanyId;
-      }
-      newSubscription = await Subscription.create(subscription, {
-        transaction: dbTransaction,
-      });
-
-      // Generate initial subscription invoice
-      if (newSubscription) {
-        await generateInitialInvoice(
-          newCustomer,
-          newSubscription,
-          req,
-          dbTransaction
-        );
-      }
-    }
-
-    // Commit the transaction
-    await dbTransaction.commit();
-
-    res.status(201).json(newCustomer);
-  } catch (err) {
-    // Rollback the transaction on any error
-    await dbTransaction.rollback();
-    console.error("Customer creation error:", err);
-    res.status(400).json({ error: err.message, details: err.errors });
-  }
-};
-
-// Helper function to generate initial subscription invoice
-const generateInitialInvoice = async (
-  customer,
-  subscription,
-  req,
-  dbTransaction
-) => {
-  try {
-    const {
-      agreedMonthlyPrice = 0,
-      additionalCharge = 0,
-      discount = 0,
-      billingCycleValue = 1,
-      startDate,
-    } = subscription;
-
-    // Calculate total amount for the billing cycle
-    const baseAmount = agreedMonthlyPrice * billingCycleValue;
-    const additionalCharges = additionalCharge * billingCycleValue;
-    const totalDiscount = discount * billingCycleValue;
-
-    // Calculate final amount (base + additional charges - discount)
-    const subtotal =
-      Math.round((baseAmount + additionalCharges - totalDiscount) * 100) / 100;
-
-    // Calculate period start and end
-    const periodStart = startDate;
-    const periodEnd = new Date(startDate);
-    periodEnd.setMonth(periodEnd.getMonth() + billingCycleValue);
-    periodEnd.setDate(periodEnd.getDate() - 1); // Last day of the period
-
+    const { customer, hardware } = req.body;
     const companyId =
       req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId
         ? req.userCompanyId
         : customer.companyId;
 
-    // Create transaction for invoice
-    const invoiceTransaction = await Transaction.create(
-      {
+    if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
+      customer.companyId = req.userCompanyId;
+    }
+
+    if (customer.email === "") customer.email = null;
+    if (customer.customerCode === "") customer.customerCode = null;
+    if (!customer.phone || customer.phone === "") customer.phone = null;
+    if (!customer.phoneSecondary || customer.phoneSecondary === "") {
+      customer.phoneSecondary = null;
+    }
+
+    const planLines = normalizePlanLines(req.body);
+    const hasFixedBill = parseFloat(customer.fixedBillAmount) > 0;
+    if (!planLines.length && !hasFixedBill) {
+      await dbTransaction.rollback();
+      return res.status(400).json({
+        error: "At least one plan or a fixed bill amount is required",
+      });
+    }
+
+    customer.billingNumber = await getNextBillingNumber(Customer, companyId);
+
+    if (!customer.billingStartDate) {
+      customer.billingStartDate =
+        customer.installationDate || new Date().toISOString().split("T")[0];
+    }
+
+    if (!customer.assignedAgentId && req.user?.id) {
+      customer.assignedAgentId = req.user.id;
+    }
+
+    const newCustomer = await Customer.create(customer, {
+      transaction: dbTransaction,
+    });
+
+    if (hardware) {
+      hardware.customerId = newCustomer.id;
+      if (hardware.macAddress === "") hardware.macAddress = null;
+      await CustomerHardware.create(hardware, { transaction: dbTransaction });
+    }
+
+    let subscriptions = [];
+    if (planLines.length) {
+      subscriptions = await createPlanSubscriptions(
+        newCustomer,
+        planLines,
         companyId,
-        customerId: customer.id,
-        type: "INVOICE",
-        direction: "DEBIT",
-        amount: subtotal,
-        balanceBefore: 0,
-        balanceAfter: subtotal,
-        description: `Subscription invoice ${periodStart} to ${
-          periodEnd.toISOString().split("T")[0]
-        }`,
-        referenceType: "invoice",
-        transactionDate: new Date(),
-        createdBy: req.user.id,
-      },
-      { transaction: dbTransaction }
+        newCustomer.billingStartDate,
+        dbTransaction
+      );
+    }
+
+    await createOpeningBalanceTransaction(
+      newCustomer,
+      companyId,
+      req.user.id,
+      dbTransaction
     );
 
-    // Create invoice document
-    const invoiceData = {
-      transactionId: invoiceTransaction.id,
-      invoiceNumber: generateInvoiceNumber(),
-      type: "SUBSCRIPTION",
-      companyId,
-      customerId: customer.id,
-      subscriptionId: subscription.id,
-      periodStart: periodStart,
-      periodEnd: periodEnd.toISOString().split("T")[0],
-      subtotal: subtotal,
-      taxAmount: 0,
-      discounts: totalDiscount,
-      amountTotal: subtotal,
-      prevBalance: 0,
-      items: [
-        {
-          name: subscription.Plan?.name || "Subscription",
-          quantity: billingCycleValue,
-          unitPrice: agreedMonthlyPrice,
-          totalAmount: subtotal,
-          itemType: "INTERNET_SERVICE",
-        },
-      ],
-      dueDate: periodEnd.toISOString().split("T")[0],
-    };
+    if (planLines.length || hasFixedBill) {
+      await generateInitialInvoice(
+        newCustomer,
+        subscriptions,
+        req,
+        dbTransaction
+      );
+    }
 
-    await Invoice.create(invoiceData, { transaction: dbTransaction });
-
-    console.log(`Invoice created for customer ${customer.id}:`, {
-      invoiceNumber: invoiceData.invoiceNumber,
-      amount: subtotal,
-      billingCycle: billingCycleValue,
-      startDate: periodStart,
-    });
-  } catch (error) {
-    console.error("Error generating invoice:", error);
-    throw error;
+    await dbTransaction.commit();
+    res.status(201).json(newCustomer);
+  } catch (err) {
+    await dbTransaction.rollback();
+    console.error("Customer creation error:", err);
+    res.status(400).json({ error: err.message, details: err.errors });
   }
 };
 
@@ -206,6 +356,18 @@ exports.getAllCustomers = async (req, res) => {
     // Add company filter for non-super admin users
     if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
       whereCondition.companyId = req.userCompanyId;
+    }
+
+    if (isSupervisor(req.user)) {
+      const managedAgentIds = await getManagedAgentIds(
+        req.user.id,
+        req.user.companyId
+      );
+      whereCondition = buildCustomerWhere(
+        req.user,
+        whereCondition,
+        managedAgentIds
+      );
     }
 
     if (search) {
@@ -382,20 +544,22 @@ exports.getCustomerById = async (req, res) => {
         },
         {
           model: CustomerHardware,
-          attributes: ["id", "deviceType", "macAddress", "ipAddress"],
+          attributes: [
+            "id",
+            "deviceType",
+            "macAddress",
+            "ipAddress",
+            "membershipNumber",
+          ],
         },
         {
           model: Subscription,
           attributes: [
             "id",
             "planId",
+            "quantity",
             "startDate",
             "agreedMonthlyPrice",
-            "billingType",
-            "billingCycle",
-            "billingCycleValue",
-            "additionalCharge",
-            "discount",
             "status",
             "nextRenewalDate",
             "lastRenewalDate",
@@ -492,18 +656,15 @@ exports.updateCustomer = async (req, res) => {
   const dbTransaction = await sequelize.transaction();
 
   try {
-    const { customer, hardware, subscription } = req.body;
+    const { customer, hardware } = req.body;
 
-    // Verify customer exists (if we're updating anything)
-    if (customer || hardware || subscription) {
-      const existingCustomer = await Customer.findOne({
-        where: { id: req.params.id },
-        transaction: dbTransaction,
-      });
-      if (!existingCustomer) {
-        await dbTransaction.rollback();
-        return res.status(404).json({ error: "Customer not found" });
-      }
+    const existingCustomer = await Customer.findOne({
+      where: { id: req.params.id },
+      transaction: dbTransaction,
+    });
+    if (!existingCustomer) {
+      await dbTransaction.rollback();
+      return res.status(404).json({ error: "Customer not found" });
     }
 
     // Update Customer only if customer data is provided
@@ -541,17 +702,37 @@ exports.updateCustomer = async (req, res) => {
       });
     }
 
-    // Update Subscription
-    if (subscription) {
-      // Add companyId for non-super admin users
-      if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
-        subscription.companyId = req.userCompanyId;
-      }
+    const planLines = normalizePlanLines(req.body);
+    if (planLines.length) {
+      const companyId =
+        req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId
+          ? req.userCompanyId
+          : existingCustomer.companyId;
 
-      await Subscription.update(subscription, {
-        where: { customerId: req.params.id },
-        transaction: dbTransaction,
-      });
+      await Subscription.update(
+        { status: "CANCELLED" },
+        {
+          where: { customerId: req.params.id, status: "ACTIVE" },
+          transaction: dbTransaction,
+        }
+      );
+
+      await createPlanSubscriptions(
+        existingCustomer,
+        planLines,
+        companyId,
+        existingCustomer.billingStartDate ||
+          new Date().toISOString().split("T")[0],
+        dbTransaction
+      );
+    } else if (req.body.subscription) {
+      const sub = req.body.subscription;
+      if (sub.id) {
+        await Subscription.update(sub, {
+          where: { id: sub.id, customerId: req.params.id },
+          transaction: dbTransaction,
+        });
+      }
     }
 
     // Commit the transaction
@@ -566,21 +747,25 @@ exports.updateCustomer = async (req, res) => {
         },
         {
           model: CustomerHardware,
-          attributes: ["id", "deviceType", "macAddress", "ipAddress"],
+          attributes: [
+            "id",
+            "deviceType",
+            "macAddress",
+            "ipAddress",
+            "membershipNumber",
+          ],
         },
         {
           model: Subscription,
           attributes: [
             "id",
             "planId",
+            "quantity",
             "startDate",
             "agreedMonthlyPrice",
-            "billingType",
-            "billingCycle",
-            "billingCycleValue",
-            "additionalCharge",
-            "discount",
             "status",
+            "nextRenewalDate",
+            "lastRenewalDate",
           ],
           include: [
             {
@@ -594,7 +779,6 @@ exports.updateCustomer = async (req, res) => {
 
     res.json(updatedCustomer);
   } catch (err) {
-    // Rollback the transaction on any error
     await dbTransaction.rollback();
     console.error("Customer update error:", err);
     res.status(400).json({ error: err.message, details: err.errors });
@@ -1035,139 +1219,40 @@ exports.deleteTransaction = async (req, res) => {
   }
 };
 
-// Renew subscription - generate new invoice
+// Renew subscription - generate new invoice for all active plan lines
 exports.renewSubscription = async (req, res) => {
   const dbTransaction = await sequelize.transaction();
   try {
     const { customerId } = req.params;
     const { companyId, id: createdBy } = req.user;
 
-    // Verify customer exists
     const customer = await Customer.findOne({
-      where: {
-        id: customerId,
-        companyId,
-      },
+      where: { id: customerId, companyId },
       include: [
         {
           model: Subscription,
           where: { status: "ACTIVE" },
+          required: false,
           include: [{ model: Plan }],
         },
       ],
     });
 
-    if (!customer || !customer.Subscriptions?.[0]) {
+    if (!customer || !customer.Subscriptions?.length) {
       return res.status(404).json({
         success: false,
-        message: "Customer or active subscription not found",
+        message: "Customer or active subscriptions not found",
       });
     }
 
-    const subscription = customer.Subscriptions[0];
-    const plan = subscription.Plan;
-
-    // Get current balance (prev balance)
-    const prevBalance = await getCurrentBalance(customerId, companyId);
-
-    // Calculate new period
-    const currentDate = new Date();
-    const periodStart =
-      subscription.nextRenewalDate || currentDate.toISOString().split("T")[0];
-    const periodEnd = new Date(periodStart);
-    periodEnd.setMonth(periodEnd.getMonth() + subscription.billingCycleValue);
-    periodEnd.setDate(periodEnd.getDate() - 1);
-
-    // Calculate invoice amount
-    const baseAmount =
-      subscription.agreedMonthlyPrice * subscription.billingCycleValue;
-    const additionalCharges =
-      subscription.additionalCharge * subscription.billingCycleValue;
-    const totalDiscount =
-      subscription.discount * subscription.billingCycleValue;
-    const subtotal =
-      Math.round((baseAmount + additionalCharges - totalDiscount) * 100) / 100;
-    const amountTotal = subtotal + prevBalance;
-
-    // Update subscription renewal dates
-    const newNextRenewalDate = new Date(periodEnd);
-    newNextRenewalDate.setDate(newNextRenewalDate.getDate() + 1);
-
-    await subscription.update(
-      {
-        lastRenewalDate: periodStart,
-        nextRenewalDate: newNextRenewalDate.toISOString().split("T")[0],
-      },
-      { transaction: dbTransaction }
-    );
-
-    // Create transaction for invoice
-    const invoiceTransaction = await Transaction.create(
-      {
+    const { invoice, invoiceTransaction, subscriptions } =
+      await renewCustomerBilling(
+        customer,
+        customer.Subscriptions,
         companyId,
-        customerId,
-        type: "INVOICE",
-        direction: "DEBIT",
-        amount: amountTotal,
-        balanceBefore: prevBalance,
-        balanceAfter: prevBalance + subtotal,
-        description: `Subscription invoice ${periodStart} to ${
-          periodEnd.toISOString().split("T")[0]
-        }`,
-        referenceType: "invoice",
-        transactionDate: new Date(),
         createdBy,
-      },
-      { transaction: dbTransaction }
-    );
-
-    // Create invoice document
-    const invoiceItems = [
-      {
-        name: plan?.name || "Subscription",
-        quantity: subscription.billingCycleValue,
-        unitPrice: subscription.agreedMonthlyPrice,
-        totalAmount: subtotal,
-        itemType: "INTERNET_SERVICE",
-      },
-    ];
-
-    if (prevBalance > 0) {
-      invoiceItems.push({
-        name: "Previous Balance",
-        quantity: 1,
-        unitPrice: prevBalance,
-        totalAmount: prevBalance,
-        itemType: "PREV_BALANCE",
-      });
-    }
-
-    const invoice = await Invoice.create(
-      {
-        transactionId: invoiceTransaction.id,
-        invoiceNumber: generateInvoiceNumber(),
-        type: "SUBSCRIPTION",
-        companyId,
-        customerId,
-        subscriptionId: subscription.id,
-        periodStart: periodStart,
-        periodEnd: periodEnd.toISOString().split("T")[0],
-        subtotal: subtotal,
-        taxAmount: 0,
-        discounts: totalDiscount,
-        amountTotal: amountTotal,
-        prevBalance: prevBalance,
-        items: invoiceItems,
-        dueDate: periodEnd.toISOString().split("T")[0],
-      },
-      { transaction: dbTransaction }
-    );
-
-    // Update transaction reference
-    await invoiceTransaction.update(
-      { referenceId: invoice.id },
-      { transaction: dbTransaction }
-    );
+        dbTransaction
+      );
 
     await dbTransaction.commit();
 
@@ -1176,7 +1261,7 @@ exports.renewSubscription = async (req, res) => {
       data: {
         transaction: invoiceTransaction.toJSON(),
         invoice: invoice.toJSON(),
-        subscription: subscription.toJSON(),
+        subscriptions: subscriptions.map((s) => s.toJSON()),
       },
       message: "Subscription renewed successfully",
     });
@@ -1310,7 +1395,7 @@ exports.generateBill = async (req, res) => {
     const createdSubscriptions = [];
     if (subscriptions && subscriptions.length > 0) {
       for (const subData of subscriptions) {
-        const { planId, monthlyPrice } = subData;
+        const { planId, monthlyPrice, quantity } = subData;
 
         // Check if plan exists
         const plan = await Plan.findOne({
@@ -1333,6 +1418,7 @@ exports.generateBill = async (req, res) => {
             await subscription.update(
               {
                 agreedMonthlyPrice: monthlyPrice || plan.monthlyPrice,
+                quantity: quantity || subscription.quantity || 1,
                 lastRenewalDate: periodStart,
                 nextRenewalDate: periodEnd,
               },
@@ -1346,15 +1432,11 @@ exports.generateBill = async (req, res) => {
                 companyId,
                 customerId,
                 planId,
+                quantity: subData.quantity || 1,
                 startDate: periodStart,
                 lastRenewalDate: periodStart,
                 nextRenewalDate: periodEnd,
                 agreedMonthlyPrice: monthlyPrice || plan.monthlyPrice,
-                billingType: "POSTPAID",
-                billingCycle: "MONTHLY",
-                billingCycleValue: 1,
-                additionalCharge: 0,
-                discount: 0,
                 status: "ACTIVE",
               },
               { transaction: dbTransaction }

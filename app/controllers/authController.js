@@ -1,6 +1,11 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const { User, Role, RolePermission, Feature } = require("../models");
+const {
+  loadUserWithRole,
+  buildAuthResponse,
+  enrichImpersonationMeta,
+} = require("../utils/authImpersonationUtils");
 require("dotenv").config();
 
 module.exports.login = async (req, res) => {
@@ -13,7 +18,6 @@ module.exports.login = async (req, res) => {
         .json({ message: "Phone and password are required" });
     }
 
-    // Find user by phone
     const user = await User.findOne({
       where: { phone },
       attributes: { include: ["passwordHash"] },
@@ -34,18 +38,15 @@ module.exports.login = async (req, res) => {
       return res.status(401).json({ message: "Invalid phone" });
     }
 
-    // Compare password
     const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid phone or password." });
     }
 
-    // Get all allowed feature codes for user
     const featureCodes = user.Role.RolePermissions.filter(
       (rp) => rp.allowed && rp.Feature
     ).map((rp) => rp.Feature.code);
 
-    // Generate JWT token
     const token = jwt.sign(
       {
         id: user.id,
@@ -53,13 +54,13 @@ module.exports.login = async (req, res) => {
         roleId: user.roleId,
         roleCode: user.Role.code,
         phone: user.phone,
+        impersonationStack: [],
       },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
 
-    // Construct response object
-    const response = {
+    res.status(200).json({
       token,
       user: {
         id: user.id,
@@ -71,116 +72,92 @@ module.exports.login = async (req, res) => {
         role: user.Role.name,
         roleCode: user.Role.code,
         allowedFeatures: featureCodes,
+        impersonationStack: [],
       },
-    };
-
-    res.status(200).json(response);
+    });
   } catch (error) {
     console.error("Login Error:", error);
     res.status(500).json({ message: "Error logging in", error });
   }
 };
 
-// Admin login as agent (impersonation)
-module.exports.loginAsAgent = async (req, res) => {
-  try {
-    const { agentId } = req.params;
-    const adminUser = req.user;
+const canImpersonate = (roleCode) =>
+  roleCode === "ADMIN" || roleCode === "SUPER_ADMIN" || roleCode === "SUPERVISOR";
 
-    // Only admins and super admins can impersonate
-    if (
-      adminUser.roleCode !== "ADMIN" &&
-      adminUser.roleCode !== "SUPER_ADMIN"
-    ) {
+// Admin login as supervisor
+module.exports.loginAsSupervisor = async (req, res) => {
+  try {
+    const { supervisorId } = req.params;
+    const actor = req.user;
+
+    if (actor.roleCode !== "ADMIN" && actor.roleCode !== "SUPER_ADMIN") {
       return res.status(403).json({
-        message: "Access denied. Only admins can login as agents.",
+        message: "Access denied. Only admins can login as supervisors.",
       });
     }
 
-    // Get the full admin user record to get name
-    // Note: roleCode is in the Role table, not User table
-    const fullAdminUser = await User.findByPk(adminUser.id, {
-      attributes: ["id", "name", "companyId", "roleId"],
-      include: [
-        {
-          model: Role,
-          attributes: ["id", "name", "code"],
-        },
-      ],
-    });
+    const supervisorRole = await Role.findOne({ where: { code: "SUPERVISOR" } });
+    if (!supervisorRole) {
+      return res.status(500).json({ error: "Supervisor role not found" });
+    }
 
-    // Get agent role
+    const supervisor = await loadUserWithRole(supervisorId);
+    if (
+      !supervisor ||
+      supervisor.roleId !== supervisorRole.id ||
+      supervisor.companyId !== actor.companyId
+    ) {
+      return res.status(404).json({ message: "Supervisor not found" });
+    }
+
+    const impersonationStack = [actor.id];
+    let response = buildAuthResponse(supervisor, impersonationStack);
+    response = await enrichImpersonationMeta(response, impersonationStack);
+
+    res.status(200).json(response);
+  } catch (error) {
+    console.error("Login as Supervisor Error:", error);
+    res.status(500).json({ message: "Error logging in as supervisor", error });
+  }
+};
+
+// Admin or supervisor login as agent
+module.exports.loginAsAgent = async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const actor = req.user;
+
+    if (!canImpersonate(actor.roleCode)) {
+      return res.status(403).json({
+        message: "Access denied. You cannot login as an agent.",
+      });
+    }
+
     const agentRole = await Role.findOne({ where: { code: "AGENT" } });
     if (!agentRole) {
       return res.status(500).json({ error: "Agent role not found" });
     }
 
-    // Find the agent
-    const agent = await User.findOne({
-      where: {
-        id: agentId,
-        roleId: agentRole.id,
-        companyId: adminUser.companyId, // Ensure agent belongs to same company
-      },
-      include: [
-        {
-          model: Role,
-          include: [
-            {
-              model: RolePermission,
-              include: [{ model: Feature }],
-            },
-          ],
-        },
-      ],
-    });
-
-    if (!agent) {
+    const agent = await loadUserWithRole(agentId);
+    if (!agent || agent.roleId !== agentRole.id) {
       return res.status(404).json({ message: "Agent not found" });
     }
 
-    // Get all allowed feature codes for agent
-    const featureCodes = agent.Role.RolePermissions.filter(
-      (rp) => rp.allowed && rp.Feature
-    ).map((rp) => rp.Feature.code);
+    if (actor.roleCode === "SUPERVISOR") {
+      if (agent.supervisorId !== actor.id) {
+        return res.status(403).json({
+          message: "Access denied. Agent is not under your supervision.",
+        });
+      }
+    } else if (agent.companyId !== actor.companyId) {
+      return res.status(404).json({ message: "Agent not found" });
+    }
 
-    // Generate JWT token with impersonation info
-    const token = jwt.sign(
-      {
-        id: agent.id,
-        companyId: agent.companyId,
-        roleId: agent.roleId,
-        roleCode: agent.Role.code,
-        phone: agent.phone,
-        // Store original admin info for impersonation
-        impersonatedBy: fullAdminUser.id,
-        originalRoleCode: fullAdminUser.Role?.code || adminUser.roleCode,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
+    const existingStack = req.user.impersonationStack || [];
+    const impersonationStack = [...existingStack, actor.id];
 
-    // Construct response object
-    const response = {
-      token,
-      user: {
-        id: agent.id,
-        companyId: agent.companyId,
-        name: agent.name,
-        email: agent.email,
-        phone: agent.phone,
-        isActive: agent.isActive,
-        role: agent.Role.name,
-        roleCode: agent.Role.code,
-        allowedFeatures: featureCodes,
-        // Include admin info for UI
-        impersonatedBy: {
-          id: fullAdminUser.id,
-          name: fullAdminUser.name,
-          roleCode: fullAdminUser.Role?.code || adminUser.roleCode,
-        },
-      },
-    };
+    let response = buildAuthResponse(agent, impersonationStack);
+    response = await enrichImpersonationMeta(response, impersonationStack);
 
     res.status(200).json(response);
   } catch (error) {
@@ -189,71 +166,31 @@ module.exports.loginAsAgent = async (req, res) => {
   }
 };
 
-// Exit impersonation (return to admin)
+// Exit impersonation (one level up the stack)
 module.exports.exitImpersonation = async (req, res) => {
   try {
-    const currentUser = req.user;
+    const stack =
+      req.user.impersonationStack ||
+      (req.user.impersonatedBy ? [req.user.impersonatedBy] : []);
 
-    // Check if currently impersonating
-    if (!currentUser.impersonatedBy) {
+    if (!stack.length) {
       return res.status(400).json({
         message: "Not currently impersonating any user.",
       });
     }
 
-    // Get the original admin user
-    const adminUser = await User.findOne({
-      where: { id: currentUser.impersonatedBy },
-      include: [
-        {
-          model: Role,
-          include: [
-            {
-              model: RolePermission,
-              include: [{ model: Feature }],
-            },
-          ],
-        },
-      ],
-    });
+    const parentId = stack[stack.length - 1];
+    const newStack = stack.slice(0, -1);
 
-    if (!adminUser) {
-      return res.status(404).json({ message: "Original admin user not found" });
+    const parentUser = await loadUserWithRole(parentId);
+    if (!parentUser) {
+      return res.status(404).json({ message: "Parent user not found" });
     }
 
-    // Get all allowed feature codes for admin
-    const featureCodes = adminUser.Role.RolePermissions.filter(
-      (rp) => rp.allowed && rp.Feature
-    ).map((rp) => rp.Feature.code);
-
-    // Generate new JWT token for admin (without impersonation)
-    const token = jwt.sign(
-      {
-        id: adminUser.id,
-        companyId: adminUser.companyId,
-        roleId: adminUser.roleId,
-        roleCode: adminUser.Role.code,
-        phone: adminUser.phone,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-
-    // Construct response object
-    const response = {
-      token,
-      user: {
-        id: adminUser.id,
-        companyId: adminUser.companyId,
-        name: adminUser.name,
-        email: adminUser.email,
-        phone: adminUser.phone,
-        isActive: adminUser.isActive,
-        role: adminUser.Role.name,
-        roleCode: adminUser.Role.code,
-        allowedFeatures: featureCodes,
-      },
-    };
+    let response = buildAuthResponse(parentUser, newStack);
+    if (newStack.length) {
+      response = await enrichImpersonationMeta(response, newStack);
+    }
 
     res.status(200).json(response);
   } catch (error) {

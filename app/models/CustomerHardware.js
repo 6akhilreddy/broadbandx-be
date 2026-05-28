@@ -14,6 +14,7 @@ const CustomerHardware = sequelize.define(
     deviceType: { type: DataTypes.STRING },
     macAddress: { type: DataTypes.STRING, unique: true },
     ipAddress: { type: DataTypes.STRING },
+    membershipNumber: { type: DataTypes.STRING },
   },
   {
     tableName: "customer_hardware",

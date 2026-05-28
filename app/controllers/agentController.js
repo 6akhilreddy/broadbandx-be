@@ -6,12 +6,46 @@ const Invoice = require("../models/Invoice");
 const Area = require("../models/Area");
 const { Op } = require("sequelize");
 const { Role } = require("../models");
+const { getSupervisorRoleId } = require("../utils/supervisorUtils");
+
+const findScopedAgent = async (agentId, companyId, user) => {
+  const agentRole = await Role.findOne({ where: { code: "AGENT" } });
+  if (!agentRole) return null;
+
+  const where = { id: agentId, roleId: agentRole.id, companyId };
+  if (user.roleCode === "SUPERVISOR") {
+    where.supervisorId = user.id;
+  }
+
+  return User.findOne({ where });
+};
+
+const validateSupervisorAssignment = async (supervisorId, companyId) => {
+  if (supervisorId === null || supervisorId === undefined || supervisorId === "") {
+    return null;
+  }
+  const parsed = parseInt(supervisorId, 10);
+  if (Number.isNaN(parsed)) {
+    throw new Error("Invalid supervisor ID");
+  }
+  const supervisorRoleId = await getSupervisorRoleId();
+  if (!supervisorRoleId) {
+    throw new Error("Supervisor role not found");
+  }
+  const supervisor = await User.findOne({
+    where: { id: parsed, roleId: supervisorRoleId, companyId },
+  });
+  if (!supervisor) {
+    throw new Error("Supervisor not found or does not belong to this company");
+  }
+  return parsed;
+};
 
 // Create a new User with the role of AGENT
 exports.createAgent = async (req, res) => {
   try {
     // Destructure all required fields from the request body, including password
-    const { name, email, phone, status, password } = req.body;
+    const { name, email, phone, status, password, supervisorId } = req.body;
 
     // Use companyId from JWT token (set by middleware)
     const companyId = req.userCompanyId;
@@ -35,6 +69,11 @@ exports.createAgent = async (req, res) => {
       phone = null;
     }
 
+    const assignedSupervisorId = await validateSupervisorAssignment(
+      supervisorId,
+      companyId
+    );
+
     // Create a new user with the role set to 'AGENT' and associate with the company
     // The password will be automatically hashed by the beforeCreate hook in the User model
     const agent = await User.create({
@@ -45,6 +84,7 @@ exports.createAgent = async (req, res) => {
       passwordHash: password, // Pass the plain password to passwordHash
       roleId: agentRole.id,
       companyId: companyId, // Associate agent with the admin's company
+      supervisorId: assignedSupervisorId,
     });
 
     res.status(201).json(agent);
@@ -69,6 +109,10 @@ exports.getAllAgents = async (req, res) => {
 
     const whereClause = { roleId: agentRole.id, companyId };
 
+    if (req.user.roleCode === "SUPERVISOR") {
+      whereClause.supervisorId = req.user.id;
+    }
+
     // Add search filter
     if (search) {
       whereClause[Op.or] = [
@@ -85,6 +129,14 @@ exports.getAllAgents = async (req, res) => {
 
     const agents = await User.findAll({
       where: whereClause,
+      include: [
+        {
+          model: User,
+          as: "Supervisor",
+          attributes: ["id", "name"],
+          required: false,
+        },
+      ],
       order: [["createdAt", "DESC"]],
     });
 
@@ -166,9 +218,22 @@ exports.getAgentById = async (req, res) => {
       return res.status(500).json({ error: "Agent role not found" });
     }
 
+    const agentWhere = { id: req.params.id, roleId: agentRole.id, companyId };
+    if (req.user.roleCode === "SUPERVISOR") {
+      agentWhere.supervisorId = req.user.id;
+    }
+
     // Find a user by their ID and ensure they have the 'AGENT' role and belong to the same company
     const agent = await User.findOne({
-      where: { id: req.params.id, roleId: agentRole.id, companyId: companyId },
+      where: agentWhere,
+      include: [
+        {
+          model: User,
+          as: "Supervisor",
+          attributes: ["id", "name", "phone"],
+          required: false,
+        },
+      ],
     });
 
     if (!agent) {
@@ -239,7 +304,7 @@ exports.getAgentById = async (req, res) => {
 // Update a User with the AGENT role, scoped by companyId
 exports.updateAgent = async (req, res) => {
   try {
-    const { name, email, phone, status } = req.body;
+    const { name, email, phone, status, supervisorId } = req.body;
     // Use companyId from JWT token (set by middleware)
     const companyId = req.userCompanyId;
 
@@ -259,22 +324,29 @@ exports.updateAgent = async (req, res) => {
       return res.status(500).json({ error: "Agent role not found" });
     }
 
-    // Update user information where the ID and companyId match, and the role is 'AGENT'
-    const [updated] = await User.update(
-      {
-        name,
-        email: processedEmail,
-        phone: processedPhone,
-        isActive: status === "ACTIVE",
-      },
-      {
-        where: {
-          id: req.params.id,
-          roleId: agentRole.id,
-          companyId: companyId,
-        },
-      }
+    const assignedSupervisorId = await validateSupervisorAssignment(
+      supervisorId,
+      companyId
     );
+
+    const updatePayload = {
+      name,
+      email: processedEmail,
+      phone: processedPhone,
+      isActive: status === "ACTIVE",
+    };
+    if (supervisorId !== undefined) {
+      updatePayload.supervisorId = assignedSupervisorId;
+    }
+
+    // Update user information where the ID and companyId match, and the role is 'AGENT'
+    const [updated] = await User.update(updatePayload, {
+      where: {
+        id: req.params.id,
+        roleId: agentRole.id,
+        companyId: companyId,
+      },
+    });
 
     if (!updated) {
       return res.status(404).json({ error: "Agent not found" });
@@ -331,10 +403,7 @@ exports.getAgentPaymentHistory = async (req, res) => {
       return res.status(500).json({ error: "Agent role not found" });
     }
 
-    // Verify the agent exists and belongs to the company
-    const agent = await User.findOne({
-      where: { id, roleId: agentRole.id, companyId },
-    });
+    const agent = await findScopedAgent(id, companyId, req.user);
 
     if (!agent) {
       return res.status(404).json({ error: "Agent not found" });
@@ -431,10 +500,7 @@ exports.getAgentMonthlyTrend = async (req, res) => {
       return res.status(500).json({ error: "Agent role not found" });
     }
 
-    // Verify the agent exists and belongs to the company
-    const agent = await User.findOne({
-      where: { id, roleId: agentRole.id, companyId },
-    });
+    const agent = await findScopedAgent(id, companyId, req.user);
 
     if (!agent) {
       return res.status(404).json({ error: "Agent not found" });
@@ -499,15 +565,16 @@ exports.getAgentAreasAndPermissions = async (req, res) => {
       return res.status(500).json({ error: "Agent role not found" });
     }
 
-    // Verify the agent exists and belongs to the company
-    const agent = await User.findOne({
-      where: { id, roleId: agentRole.id, companyId },
-      attributes: ["id", "assignedAreas", "agentPermissions"],
-    });
+    const agent = await findScopedAgent(id, companyId, req.user);
 
     if (!agent) {
       return res.status(404).json({ error: "Agent not found" });
     }
+
+    const agentRecord = await User.findOne({
+      where: { id, roleId: agentRole.id, companyId },
+      attributes: ["id", "assignedAreas", "agentPermissions"],
+    });
 
     // Get all areas for the company
     const allAreas = await Area.findAll({
@@ -517,7 +584,7 @@ exports.getAgentAreasAndPermissions = async (req, res) => {
     });
 
     // Ensure assignedAreas is properly formatted (handle JSON parsing if needed)
-    let assignedAreasData = agent.assignedAreas || [];
+    let assignedAreasData = agentRecord.assignedAreas || [];
     if (typeof assignedAreasData === "string") {
       try {
         assignedAreasData = JSON.parse(assignedAreasData);
@@ -526,7 +593,7 @@ exports.getAgentAreasAndPermissions = async (req, res) => {
       }
     }
 
-    let agentPermissionsData = agent.agentPermissions || [];
+    let agentPermissionsData = agentRecord.agentPermissions || [];
     if (typeof agentPermissionsData === "string") {
       try {
         agentPermissionsData = JSON.parse(agentPermissionsData);

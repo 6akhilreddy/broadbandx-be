@@ -2,6 +2,7 @@ const express = require("express");
 const {
   login,
   loginAsAgent,
+  loginAsSupervisor,
   exitImpersonation,
 } = require("../controllers/authController");
 const { authenticate } = require("../middlewares/authMiddleware");
@@ -136,7 +137,14 @@ const router = express.Router();
  */
 router.post("/login", login);
 
-// Admin login as agent (impersonation) - requires authentication
+// Admin login as supervisor (impersonation)
+router.post(
+  "/login-as-supervisor/:supervisorId",
+  authenticate,
+  loginAsSupervisor
+);
+
+// Admin / supervisor login as agent (impersonation)
 router.post("/login-as-agent/:agentId", authenticate, loginAsAgent);
 
 // Exit impersonation - requires authentication

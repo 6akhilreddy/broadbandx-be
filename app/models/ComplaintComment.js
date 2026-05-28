@@ -23,3 +23,4 @@ const ComplaintComment = sequelize.define(
 
 module.exports = ComplaintComment;
 
+

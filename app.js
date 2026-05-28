@@ -10,6 +10,7 @@ const companyRoutes = require("./app/routes/companyRoutes");
 const customerRoutes = require("./app/routes/customerRoutes");
 const planRoutes = require("./app/routes/planRoutes");
 const agentRoutes = require("./app/routes/agentRoutes");
+const supervisorRoutes = require("./app/routes/supervisorRoutes");
 const areaRoutes = require("./app/routes/areaRoutes");
 const collectionRoutes = require("./app/routes/collectionRoutes");
 const paymentRoutes = require("./app/routes/paymentRoutes");
@@ -18,6 +19,9 @@ const dashboardRoutes = require("./app/routes/dashboardRoutes");
 const transactionRoutes = require("./app/routes/transactionRoutes");
 const complaintRoutes = require("./app/routes/complaintRoutes");
 const { swaggerUi, swaggerSpec } = require("./app/config/swagger");
+const path = require("path");
+const fs = require("fs");
+const { resolveBroadbandxStorageRoot } = require("./app/utils/storagePaths");
 
 // Initialize Express app
 const app = express();
@@ -37,6 +41,23 @@ sequelize
 // Swagger UI
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
+// Serve stored customer documents (defaults to /broadbandx)
+const BROADBANDX_STORAGE_ROOT = resolveBroadbandxStorageRoot();
+
+try {
+  if (!fs.existsSync(BROADBANDX_STORAGE_ROOT)) {
+    fs.mkdirSync(BROADBANDX_STORAGE_ROOT, { recursive: true });
+  }
+} catch (e) {
+  console.warn(
+    "Warning: could not create BROADBANDX_STORAGE_ROOT:",
+    BROADBANDX_STORAGE_ROOT,
+    e.message
+  );
+}
+
+app.use("/broadbandx", express.static(BROADBANDX_STORAGE_ROOT));
+
 // API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/admins", adminRoutes);
@@ -44,6 +65,7 @@ app.use("/api/companies", companyRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api/agents", agentRoutes);
+app.use("/api/supervisors", supervisorRoutes);
 app.use("/api/areas", areaRoutes);
 app.use("/api/collection", collectionRoutes);
 app.use("/api/payments", paymentRoutes);

@@ -6,6 +6,11 @@ const Customer = require("../models/Customer");
 const User = require("../models/User");
 const Area = require("../models/Area");
 const { Role } = require("../models");
+const {
+  getManagedAgentIds,
+  buildComplaintWhere,
+  isSupervisor,
+} = require("../utils/supervisorUtils");
 
 // Create a new complaint
 exports.createComplaint = async (req, res) => {
@@ -111,17 +116,26 @@ exports.getAllComplaints = async (req, res) => {
     // Build where clause
     const whereCondition = { companyId: companyFilter };
 
-    // For agents, only show complaints assigned to them
     const isAgent = req.user.roleCode === "AGENT";
+    const supervisorView = isSupervisor(req.user);
+    const managedAgentIds = supervisorView
+      ? await getManagedAgentIds(req.user.id, companyFilter)
+      : [];
+
     if (isAgent) {
       whereCondition.assignedAgentId = req.user.id;
+    } else if (supervisorView) {
+      Object.assign(
+        whereCondition,
+        buildComplaintWhere(req.user, { companyId: companyFilter }, managedAgentIds)
+      );
     }
 
     if (status) {
       whereCondition.status = status;
     }
 
-    if (assignedAgentId && !isAgent) {
+    if (assignedAgentId && !isAgent && !supervisorView) {
       whereCondition.assignedAgentId = assignedAgentId;
     }
 

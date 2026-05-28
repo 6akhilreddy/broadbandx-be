@@ -44,6 +44,7 @@ const authenticate = async (req, res, next) => {
       ).map((rp) => rp.Feature.code),
       // Include impersonation info if present
       impersonatedBy: decoded.impersonatedBy || null,
+      impersonationStack: decoded.impersonationStack || [],
       originalRoleCode: decoded.originalRoleCode || null,
     };
 

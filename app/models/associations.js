@@ -22,6 +22,8 @@ const defineAssociations = (models = null) => {
   const Complaint = models?.Complaint || require("../models/Complaint");
   const ComplaintComment =
     models?.ComplaintComment || require("../models/ComplaintComment");
+  const CustomerDocument =
+    models?.CustomerDocument || require("../models/CustomerDocument");
   // 🔹 Area Associations 🔹
   // Area belongs to Company and User (createdBy)
   Company.hasMany(Area, { foreignKey: "companyId", onDelete: "CASCADE" });
@@ -45,6 +47,12 @@ const defineAssociations = (models = null) => {
 
   Company.hasMany(Customer, { foreignKey: "companyId", onDelete: "CASCADE" });
   Customer.belongsTo(Company, { foreignKey: "companyId" });
+
+  Company.hasMany(CustomerDocument, {
+    foreignKey: "companyId",
+    onDelete: "CASCADE",
+  });
+  CustomerDocument.belongsTo(Company, { foreignKey: "companyId" });
 
   Company.hasMany(Subscription, {
     foreignKey: "companyId",
@@ -107,6 +115,13 @@ const defineAssociations = (models = null) => {
   User.belongsTo(Role, { foreignKey: "roleId" });
   Role.hasMany(User, { foreignKey: "roleId" });
 
+  // Supervisor manages agents (optional hierarchy)
+  User.belongsTo(User, { as: "Supervisor", foreignKey: "supervisorId" });
+  User.hasMany(User, {
+    as: "ManagedAgents",
+    foreignKey: "supervisorId",
+  });
+
   // 🔹 Feature and RolePermission Associations 🔹
   // Establishes the many-to-many relationship between Roles and Features.
   Feature.hasMany(RolePermission, {
@@ -139,6 +154,12 @@ const defineAssociations = (models = null) => {
 
   Customer.hasMany(Invoice, { foreignKey: "customerId", onDelete: "CASCADE" });
   Invoice.belongsTo(Customer, { foreignKey: "customerId" });
+
+  Customer.hasMany(CustomerDocument, {
+    foreignKey: "customerId",
+    onDelete: "CASCADE",
+  });
+  CustomerDocument.belongsTo(Customer, { foreignKey: "customerId" });
 
   // 🔹 Subscription and Invoice Associations 🔹
   Subscription.hasMany(Invoice, {

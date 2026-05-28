@@ -13,6 +13,7 @@ const RolePermission = require("./RolePermission");
 const Area = require("./Area");
 const Complaint = require("./Complaint");
 const ComplaintComment = require("./ComplaintComment");
+const CustomerDocument = require("./CustomerDocument");
 const sequelize = require("../config/db");
 
 const defineAssociations = require("./associations");
@@ -34,6 +35,7 @@ defineAssociations({
   Area,
   Complaint,
   ComplaintComment,
+  CustomerDocument,
 });
 
 module.exports = {
@@ -53,4 +55,5 @@ module.exports = {
   Area,
   Complaint,
   ComplaintComment,
+  CustomerDocument,
 };

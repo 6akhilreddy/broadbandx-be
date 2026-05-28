@@ -234,6 +234,28 @@ router.post(
   customerController.createCustomer
 );
 
+router.get(
+  "/:id/documents",
+  ...requirePermission("customer.view.one"),
+  ...companyFilter,
+  customerController.listCustomerDocuments
+);
+
+router.post(
+  "/:id/documents",
+  ...requirePermission("customer.edit"),
+  ...companyFilter,
+  customerController.uploadDocumentsMiddleware,
+  customerController.uploadCustomerDocuments
+);
+
+router.delete(
+  "/:id/documents/:docId",
+  ...requirePermission("customer.edit"),
+  ...companyFilter,
+  customerController.deleteCustomerDocument
+);
+
 /**
  * @swagger
  * /customers:
@@ -441,6 +463,13 @@ router.get(
   ...requirePermission("customers.view"),
   ...companyFilter,
   customerController.getAllCustomers
+);
+
+router.get(
+  "/next-billing-number",
+  ...requirePermission("customers.view"),
+  ...companyFilter,
+  customerController.previewNextBillingNumber
 );
 
 /**

@@ -8,6 +8,13 @@ const Subscription = require("../models/Subscription");
 const Transaction = require("../models/Transaction");
 const Complaint = require("../models/Complaint");
 const { getCurrentBalance } = require("../utils/financeUtils");
+const {
+  getManagedAgentIds,
+  buildPaymentWhere,
+  buildCustomerWhere,
+  buildComplaintWhere,
+  isSupervisor,
+} = require("../utils/supervisorUtils");
 
 // Get dashboard statistics
 const getDashboardStats = async (req, res) => {
@@ -15,6 +22,7 @@ const getDashboardStats = async (req, res) => {
     const { companyId } = req.query;
     const isAgent = req.user.roleCode === "AGENT";
     const agentId = isAgent ? req.user.id : null;
+    const supervisorView = isSupervisor(req.user);
 
     // Get company filter - super admin can specify, others use their company
     const companyFilter =
@@ -59,11 +67,21 @@ const getDashboardStats = async (req, res) => {
     // Build base where clause for company filtering
     const companyWhere = companyFilter ? { companyId: companyFilter } : {};
 
-    // For agents, filter by collectedBy
-    const paymentWhere =
-      isAgent && agentId
-        ? { ...companyWhere, collectedBy: agentId }
-        : companyWhere;
+    const managedAgentIds = supervisorView
+      ? await getManagedAgentIds(req.user.id, companyFilter)
+      : [];
+
+    const paymentWhere = buildPaymentWhere(
+      req.user,
+      companyWhere,
+      managedAgentIds
+    );
+
+    const customerWhere = buildCustomerWhere(
+      req.user,
+      companyWhere,
+      managedAgentIds
+    );
 
     // 1. totalCollection - total collected amount so far
     const totalCollection =
@@ -96,7 +114,7 @@ const getDashboardStats = async (req, res) => {
     // 4. pendingAmount - total outstanding balance across all customers
     // Calculate by summing all current balances
     const customers = await Customer.findAll({
-      where: companyWhere,
+      where: customerWhere,
       attributes: ["id", "companyId"],
     });
 
@@ -108,9 +126,20 @@ const getDashboardStats = async (req, res) => {
     pendingAmount = Math.round(pendingAmount * 100) / 100;
 
     // 5. todaysRenewals - renewals made today (subscriptions with nextRenewalDate = today)
+    const subscriptionScope = supervisorView
+      ? {
+          companyId: companyFilter,
+          customerId: {
+            [Op.in]: customers.length
+              ? customers.map((c) => c.id)
+              : [-1],
+          },
+        }
+      : companyWhere;
+
     const todaysRenewals = await Subscription.count({
       where: {
-        ...companyWhere,
+        ...subscriptionScope,
         status: "ACTIVE",
         nextRenewalDate: {
           [Op.eq]: today.toISOString().split("T")[0],
@@ -121,7 +150,7 @@ const getDashboardStats = async (req, res) => {
     // 6. thisMonthRenewals - renewals that are pending this month
     const thisMonthRenewals = await Subscription.count({
       where: {
-        ...companyWhere,
+        ...subscriptionScope,
         status: "ACTIVE",
         nextRenewalDate: {
           [Op.between]: [
@@ -135,7 +164,7 @@ const getDashboardStats = async (req, res) => {
     // 7. upcomingRenewals - renewals that are upcoming from next month
     const upcomingRenewals = await Subscription.count({
       where: {
-        ...companyWhere,
+        ...subscriptionScope,
         status: "ACTIVE",
         nextRenewalDate: {
           [Op.gte]: nextMonthStart.toISOString().split("T")[0],
@@ -146,7 +175,7 @@ const getDashboardStats = async (req, res) => {
     // 8. expiredRenewals - renewals that are past the renewal date
     const expiredRenewals = await Subscription.count({
       where: {
-        ...companyWhere,
+        ...subscriptionScope,
         status: "ACTIVE",
         nextRenewalDate: {
           [Op.lt]: today.toISOString().split("T")[0],
@@ -156,13 +185,13 @@ const getDashboardStats = async (req, res) => {
 
     // 9. totalCustomers
     const totalCustomers = await Customer.count({
-      where: companyWhere,
+      where: customerWhere,
     });
 
     // 10. totalActiveCustomers
     const totalActiveCustomers = await Customer.count({
       where: {
-        ...companyWhere,
+        ...customerWhere,
         isActive: true,
       },
     });
@@ -170,7 +199,7 @@ const getDashboardStats = async (req, res) => {
     // 11. totalInactiveCustomers
     const totalInactiveCustomers = await Customer.count({
       where: {
-        ...companyWhere,
+        ...customerWhere,
         isActive: false,
       },
     });
@@ -178,7 +207,7 @@ const getDashboardStats = async (req, res) => {
     // 12. thisMonthNewCustomers
     const thisMonthNewCustomers = await Customer.count({
       where: {
-        ...companyWhere,
+        ...customerWhere,
         createdAt: {
           [Op.between]: [monthStart, monthEnd],
         },
@@ -188,7 +217,7 @@ const getDashboardStats = async (req, res) => {
     // 13. followUpCustomers - customers with follow up date = today
     const followUpCustomers = await Customer.count({
       where: {
-        ...companyWhere,
+        ...customerWhere,
         followUpDate: {
           [Op.eq]: today.toISOString().split("T")[0],
         },
@@ -196,20 +225,11 @@ const getDashboardStats = async (req, res) => {
     });
 
     // 14. openComplaints - complaints with status OPEN
-    // For agents, filter by assignedAgentId
-    const complaintWhere =
-      isAgent && agentId
-        ? {
-            ...companyWhere,
-            status: "OPEN",
-            isActive: true,
-            assignedAgentId: agentId,
-          }
-        : {
-            ...companyWhere,
-            status: "OPEN",
-            isActive: true,
-          };
+    const complaintWhere = {
+      ...buildComplaintWhere(req.user, companyWhere, managedAgentIds),
+      status: "OPEN",
+      isActive: true,
+    };
 
     const openComplaints = await Complaint.count({
       where: complaintWhere,
@@ -296,7 +316,7 @@ const getDashboardStats = async (req, res) => {
     // Plan wise subscriptions (active subscriptions)
     const planWiseSubscriptions = await Subscription.findAll({
       where: {
-        ...companyWhere,
+        ...subscriptionScope,
         status: "ACTIVE",
       },
       include: [

@@ -30,3 +30,4 @@ const Complaint = sequelize.define(
 
 module.exports = Complaint;
 
+

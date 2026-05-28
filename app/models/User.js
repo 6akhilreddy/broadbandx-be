@@ -28,6 +28,11 @@ const User = sequelize.define(
       allowNull: true,
       defaultValue: [],
     },
+    supervisorId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "users", key: "id" },
+    },
   },
   {
     tableName: "users",

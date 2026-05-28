@@ -1062,6 +1062,16 @@ const seedDatabase = async () => {
         module: "Dashboard",
       },
       { code: "agent.manage", name: "Manage Agents", module: "Users" },
+      {
+        code: "supervisor.manage",
+        name: "Manage Supervisors",
+        module: "Users",
+      },
+      {
+        code: "supervisors.view",
+        name: "View Supervisors",
+        module: "Users",
+      },
       { code: "plan.manage", name: "Manage Plans", module: "Billing" },
       { code: "customers.view", name: "View Customers", module: "Customers" },
       { code: "plans.view", name: "View Plans", module: "Plans" },
@@ -1140,6 +1150,11 @@ const seedDatabase = async () => {
         name: "Agent",
         code: "AGENT",
         description: "Field agent with customer and collection access",
+      },
+      {
+        name: "Supervisor",
+        code: "SUPERVISOR",
+        description: "Supervises field agents with team-level visibility",
       },
     ]);
     const roleMap = roles.reduce(
@@ -1241,6 +1256,28 @@ const seedDatabase = async () => {
         })
       );
     }
+    const supervisorNames = ["Ravi Nair", "Sunita Rao", "Karan Mehta"];
+    const supervisors = [];
+    for (let i = 0; i < supervisorNames.length; i++) {
+      const name = supervisorNames[i];
+      supervisors.push(
+        await models.User.create({
+          name,
+          email: `supervisor${i + 1}@nexustelecom.com`,
+          phone: `765432109${i}`,
+          passwordHash: "supervisorpass123",
+          roleId: roleMap["SUPERVISOR"],
+          companyId: company.id,
+        })
+      );
+    }
+
+    // Assign ~half of agents to supervisors; rest stay independent
+    for (let i = 0; i < Math.floor(agents.length / 2); i++) {
+      const supervisor = supervisors[i % supervisors.length];
+      await agents[i].update({ supervisorId: supervisor.id });
+    }
+
     console.log("Users seeded.");
 
     // --- 5. Permissions ---
@@ -1284,6 +1321,25 @@ const seedDatabase = async () => {
           featureId: featureMap[code],
         });
     });
+
+    [
+      "agent.dashboard.view",
+      "collection.manage",
+      "collection.view",
+      "customers.view",
+      "customer.view.one",
+      "customer.add",
+      "payment.collect",
+      "customer.hardware.view",
+      "agents.view",
+    ].forEach((code) => {
+      if (featureMap[code])
+        rolePermissions.push({
+          roleId: roleMap["SUPERVISOR"],
+          featureId: featureMap[code],
+        });
+    });
+
     await models.RolePermission.bulkCreate(rolePermissions);
     console.log("Permissions granted.");
 
@@ -1366,8 +1422,11 @@ const seedDatabase = async () => {
       const createdBy = getRandomItem(admins);
       const area = getRandomItem(areasArr);
 
+      const billingStart = new Date();
+      billingStart.setDate(1);
       customersPayload.push({
         companyId: company.id,
+        billingNumber: i + 1,
         fullName: name,
         phone,
         email,
@@ -1375,8 +1434,20 @@ const seedDatabase = async () => {
         customerCode: code,
         assignedAgentId: assignedAgent.id,
         createdBy: createdBy.id,
-        installationDate: new Date(),
+        installationDate: billingStart.toISOString().split("T")[0],
         areaId: area.id,
+        securityDeposit: Math.random() > 0.6 ? randomInt(500, 5000) : 0,
+        billingStartDate: billingStart.toISOString().split("T")[0],
+        openingBalance: Math.random() > 0.85 ? randomInt(100, 2000) : 0,
+        openingBalanceType: getRandomItem(["OUTSTANDING", "ADVANCE"]),
+        billingType: getRandomItem(["PREPAID", "POSTPAID"]),
+        billingCycle: getRandomItem(["MONTHLY", "DAILY", "END_OF_MONTH"]),
+        billingCycleValue: 1,
+        monthlyAdditionalCharge:
+          Math.random() > 0.7 ? randomInt(50, 300) : 0,
+        monthlyDiscount: Math.random() > 0.85 ? randomInt(50, 200) : 0,
+        gstType: getRandomItem(["NONE", "CGST_SGST", "IGST"]),
+        fixedBillAmount: null,
       });
     }
 
@@ -1475,6 +1546,7 @@ const seedDatabase = async () => {
         deviceType,
         macAddress: mac,
         ipAddress,
+        membershipNumber: `MEM-${randomInt(10000, 99999)}`,
       });
 
       if (Math.random() > 0.5) {
@@ -1673,17 +1745,13 @@ const seedDatabase = async () => {
         companyId: company.id,
         customerId: customer.id,
         planId: plan.id,
+        quantity: 1,
         startDate: startDate,
         nextRenewalDate: nextRenewalDate.toISOString().split("T")[0],
         lastRenewalDate: lastRenewalDate
           ? lastRenewalDate.toISOString().split("T")[0]
           : null,
         agreedMonthlyPrice: plan.monthlyPrice,
-        billingType: getRandomItem(["PREPAID", "POSTPAID"]),
-        billingCycle: getRandomItem(["MONTHLY", "DAILY"]),
-        billingCycleValue: 1,
-        additionalCharge: Math.random() > 0.7 ? randomInt(100, 500) : 0,
-        discount: Math.random() > 0.8 ? randomInt(50, 200) : 0,
         status: customer.isActive
           ? "ACTIVE"
           : Math.random() > 0.5

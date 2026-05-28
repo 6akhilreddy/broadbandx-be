@@ -5,16 +5,30 @@ const Customer = require("../models/Customer");
 const Area = require("../models/Area");
 const User = require("../models/User");
 const Company = require("../models/Company");
+const {
+  getManagedAgentIds,
+  buildPaymentWhere,
+  isSupervisor,
+} = require("../utils/supervisorUtils");
 
 // Get collection data with filters
 const getCollectionData = async (req, res) => {
   try {
     const { startDate, endDate, areaId, paymentMethod, companyId } = req.query;
 
-    // Build where clause
-    const whereClause = {
-      companyId: companyId || req.user.companyId,
-    };
+    const resolvedCompanyId = companyId || req.user.companyId;
+    const companyWhere = { companyId: resolvedCompanyId };
+
+    let managedAgentIds = [];
+    if (isSupervisor(req.user)) {
+      managedAgentIds = await getManagedAgentIds(req.user.id, resolvedCompanyId);
+    }
+
+    const whereClause = buildPaymentWhere(
+      req.user,
+      companyWhere,
+      managedAgentIds
+    );
 
     if (startDate && endDate) {
       whereClause.collectedAt = {
