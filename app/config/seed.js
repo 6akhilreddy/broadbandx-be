@@ -1360,7 +1360,13 @@ const seedDatabase = async () => {
           500, 750, 1000, 1200, 1500, 1800, 2000, 2500, 3000, 3500, 4000, 4500,
           5000,
         ];
-        const price = priceBands[randomInt(0, priceBands.length - 1)];
+        const normalizedName = String(name ?? "").trim();
+        const nameNumberMatch = normalizedName.match(/(\d+(?:\.\d+)?)\s*$/);
+        const derivedPrice = nameNumberMatch ? Number(nameNumberMatch[1]) : null;
+        const price =
+          Number.isFinite(derivedPrice) && derivedPrice > 0
+            ? derivedPrice
+            : priceBands[randomInt(0, priceBands.length - 1)];
         const code =
           "PLAN-" +
           name
