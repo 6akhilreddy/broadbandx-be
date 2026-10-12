@@ -7,51 +7,84 @@ const GST_RATES = {
   IGST: 18,
 };
 
+function parseDateParts(dateStr) {
+  if (dateStr instanceof Date) {
+    return {
+      year: dateStr.getFullYear(),
+      month: dateStr.getMonth(),
+      day: dateStr.getDate(),
+    };
+  }
+  const parts = String(dateStr).split("T")[0].split("-").map(Number);
+  return { year: parts[0], month: parts[1] - 1, day: parts[2] };
+}
+
+function formatDateParts(year, month, day) {
+  const m = String(month + 1).padStart(2, "0");
+  const d = String(day).padStart(2, "0");
+  return `${year}-${m}-${d}`;
+}
+
+function daysInMonth(year, month) {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
 function getLastDayOfMonth(date) {
-  const d = new Date(date);
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  const { year, month } = parseDateParts(date);
+  const lastDay = daysInMonth(year, month);
+  return new Date(Date.UTC(year, month, lastDay));
 }
 
 function formatDateOnly(date) {
-  return date.toISOString().split("T")[0];
+  if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return date;
+  }
+  const { year, month, day } = parseDateParts(date);
+  return formatDateParts(year, month, day);
 }
 
 /**
  * Compute billing period end from start date and cycle settings.
  */
 function calculatePeriodEnd(startDate, billingCycle, billingCycleValue = 1) {
-  const start = new Date(startDate);
-  let periodEnd;
+  const { year, month, day } = parseDateParts(startDate);
+  const cycleVal = parseInt(billingCycleValue, 10) || 1;
 
   if (billingCycle === "END_OF_MONTH") {
-    periodEnd = getLastDayOfMonth(start);
-  } else if (billingCycle === "DAILY") {
-    periodEnd = new Date(start);
-    periodEnd.setDate(periodEnd.getDate() + billingCycleValue - 1);
-  } else {
-    // MONTHLY
-    periodEnd = new Date(start);
-    periodEnd.setMonth(periodEnd.getMonth() + billingCycleValue);
-    periodEnd.setDate(periodEnd.getDate() - 1);
+    const lastDay = daysInMonth(year, month);
+    return formatDateParts(year, month, lastDay);
   }
 
-  return formatDateOnly(periodEnd);
+  if (billingCycle === "DAILY") {
+    const d = new Date(Date.UTC(year, month, day + cycleVal - 1));
+    return formatDateParts(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  // MONTHLY
+  const targetMonthIndex = month + cycleVal;
+  const targetYear = year + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const maxDay = daysInMonth(targetYear, targetMonth);
+  const clampedDay = Math.min(day, maxDay);
+
+  const d = new Date(Date.UTC(targetYear, targetMonth, clampedDay - 1));
+  return formatDateParts(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
 /**
  * Next renewal date = day after period end.
  */
 function calculateNextRenewalDate(periodEnd) {
-  const next = new Date(periodEnd);
-  next.setDate(next.getDate() + 1);
-  return formatDateOnly(next);
+  const { year, month, day } = parseDateParts(periodEnd);
+  const d = new Date(Date.UTC(year, month, day + 1));
+  return formatDateParts(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
 /**
  * Cycle multiplier for recurring charges (months or days treated as units).
  */
 function getCycleMultiplier(billingCycle, billingCycleValue = 1) {
-  return billingCycle === "DAILY" ? billingCycleValue : billingCycleValue;
+  return parseInt(billingCycleValue, 10) || 1;
 }
 
 /**

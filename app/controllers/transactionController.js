@@ -13,14 +13,17 @@ const { Op } = require("sequelize");
 const getCustomerTransactions = async (req, res) => {
   try {
     const { customerId } = req.params;
-    const { companyId } = req.user;
+    const where = {
+      customerId,
+      isActive: true,
+    };
+
+    if (req.user.roleCode !== "SUPER_ADMIN" && req.user.companyId) {
+      where.companyId = req.user.companyId;
+    }
 
     const transactions = await Transaction.findAll({
-      where: {
-        customerId,
-        companyId,
-        isActive: true,
-      },
+      where,
       include: [
         {
           model: Customer,
@@ -30,7 +33,7 @@ const getCustomerTransactions = async (req, res) => {
         {
           model: User,
           as: "CreatedBy",
-          attributes: ["id", "fullName"],
+          attributes: ["id", "name"],
         },
       ],
       order: [["transactionDate", "DESC"]],
@@ -53,10 +56,16 @@ const getCustomerTransactions = async (req, res) => {
 // Create a new transaction
 const createTransaction = async (req, res) => {
   try {
-    const { companyId, id: createdBy } = req.user;
+    const { id: createdBy } = req.user;
+    const companyId =
+      req.user.roleCode === "SUPER_ADMIN"
+        ? req.body.companyId || req.user.companyId
+        : req.user.companyId;
+
     const {
       customerId,
       type,
+      direction,
       amount,
       balanceBefore,
       balanceAfter,
@@ -66,10 +75,14 @@ const createTransaction = async (req, res) => {
       transactionDate,
     } = req.body;
 
+    const transactionDirection =
+      direction || (type === "PAYMENT" ? "CREDIT" : "DEBIT");
+
     const transaction = await Transaction.create({
       companyId,
       customerId,
       type,
+      direction: transactionDirection,
       amount,
       balanceBefore,
       balanceAfter,
@@ -98,14 +111,17 @@ const createTransaction = async (req, res) => {
 const getCustomerTransactionStats = async (req, res) => {
   try {
     const { customerId } = req.params;
-    const { companyId } = req.user;
+    const where = {
+      customerId,
+      isActive: true,
+    };
+
+    if (req.user.roleCode !== "SUPER_ADMIN" && req.user.companyId) {
+      where.companyId = req.user.companyId;
+    }
 
     const stats = await Transaction.findOne({
-      where: {
-        customerId,
-        companyId,
-        isActive: true,
-      },
+      where,
       attributes: [
         [sequelize.fn("SUM", sequelize.col("amount")), "totalAmount"],
         [sequelize.fn("COUNT", sequelize.col("id")), "totalTransactions"],
@@ -113,11 +129,7 @@ const getCustomerTransactionStats = async (req, res) => {
     });
 
     const latestTransaction = await Transaction.findOne({
-      where: {
-        customerId,
-        companyId,
-        isActive: true,
-      },
+      where,
       order: [["transactionDate", "DESC"]],
     });
 

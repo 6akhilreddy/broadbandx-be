@@ -18,6 +18,7 @@ const reportRoutes = require("./app/routes/reportRoutes");
 const dashboardRoutes = require("./app/routes/dashboardRoutes");
 const transactionRoutes = require("./app/routes/transactionRoutes");
 const complaintRoutes = require("./app/routes/complaintRoutes");
+const inventoryRoutes = require("./app/routes/inventoryRoutes");
 const { swaggerUi, swaggerSpec } = require("./app/config/swagger");
 const path = require("path");
 const fs = require("fs");
@@ -73,6 +74,7 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/complaints", complaintRoutes);
+app.use("/api/inventory", inventoryRoutes);
 
 // Start server
 const PORT = process.env.PORT || 3000;

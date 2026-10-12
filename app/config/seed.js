@@ -972,16 +972,23 @@ const generateMAC = () => {
   return mac;
 };
 
+// Maximum date for seed data - all transactions should be before or on this date
+const now = new Date();
+const MAX_SEED_DATE = now;
+const effectiveNow = now;
+const monthsBackCount = 18; // varied months/years
+
 // Random date within a specific month of a specific year (capped at MAX_SEED_DATE)
 const generateRandomDateInMonth = (year, month) => {
   const daysInMonth = new Date(year, month, 0).getDate();
-  let randomDay = randomInt(1, daysInMonth);
+  let maxDay = daysInMonth;
 
-  // If this is November 2025, cap the day at 12
-  if (year === 2025 && month === 11) {
-    randomDay = Math.min(randomDay, 12);
+  // If this is current year and current month, cap the day at today's date
+  if (year === now.getFullYear() && month === now.getMonth() + 1) {
+    maxDay = Math.min(daysInMonth, now.getDate());
   }
 
+  const randomDay = randomInt(1, Math.max(1, maxDay));
   const randomHour = randomInt(9, 18);
   const randomMinute = randomInt(0, 59);
   const generatedDate = new Date(
@@ -1015,13 +1022,6 @@ const sanitizePhone = (v) => {
   if (s.length > 12) s = s.slice(-12);
   return s || null;
 };
-
-// Maximum date for seed data - all transactions should be before or on this date
-const MAX_SEED_DATE = new Date("2025-11-12");
-const now = new Date();
-// Use the earlier of today or MAX_SEED_DATE
-const effectiveNow = now > MAX_SEED_DATE ? MAX_SEED_DATE : now;
-const monthsBackCount = 18; // varied months/years
 
 const monthsBack = Array.from({ length: monthsBackCount }, (_, i) => {
   const d = new Date(
@@ -1125,6 +1125,50 @@ const seedDatabase = async () => {
         code: "customer.balance-history.view",
         name: "View Customer Balance History",
         module: "Customers",
+      },
+
+      // Complaints
+      {
+        code: "complaints.view",
+        name: "View Complaints",
+        module: "Complaints",
+      },
+      {
+        code: "complaint.add",
+        name: "Add Complaint",
+        module: "Complaints",
+      },
+      {
+        code: "complaint.edit",
+        name: "Edit Complaint",
+        module: "Complaints",
+      },
+      {
+        code: "complaint.delete",
+        name: "Delete Complaint",
+        module: "Complaints",
+      },
+
+      // Inventory
+      {
+        code: "inventory.view",
+        name: "View Hardware Inventory",
+        module: "Inventory",
+      },
+      {
+        code: "inventory.add",
+        name: "Add Hardware Inventory",
+        module: "Inventory",
+      },
+      {
+        code: "inventory.edit",
+        name: "Edit & Replace Hardware Inventory",
+        module: "Inventory",
+      },
+      {
+        code: "inventory.delete",
+        name: "Delete Hardware Inventory",
+        module: "Inventory",
       },
     ]);
     const featureMap = features.reduce(
@@ -1314,6 +1358,10 @@ const seedDatabase = async () => {
       "customer.add",
       "payment.collect",
       "customer.hardware.view",
+      "complaints.view",
+      "complaint.add",
+      "complaint.edit",
+      "inventory.view",
     ].forEach((code) => {
       if (featureMap[code])
         rolePermissions.push({
@@ -1332,6 +1380,10 @@ const seedDatabase = async () => {
       "payment.collect",
       "customer.hardware.view",
       "agents.view",
+      "complaints.view",
+      "complaint.add",
+      "complaint.edit",
+      "inventory.view",
     ].forEach((code) => {
       if (featureMap[code])
         rolePermissions.push({
@@ -1545,14 +1597,14 @@ const seedDatabase = async () => {
 
       const ipAddress =
         (hw.ip && hw.ip.trim()) ||
-        `192.168.${randomInt(0, 254)}.${randomInt(2, 254)}`;
+        `10.205.201.${randomInt(10, 254)}`;
 
       hardwareData.push({
         customerId: cid,
         deviceType,
         macAddress: mac,
         ipAddress,
-        membershipNumber: `MEM-${randomInt(10000, 99999)}`,
+        membershipNumber: hw.membershipNumber || `${randomInt(100000, 999999)}`,
       });
 
       if (Math.random() > 0.5) {
@@ -1560,10 +1612,8 @@ const seedDatabase = async () => {
           customerId: cid,
           deviceType: getRandomItem(deviceFallbackTypes),
           macAddress: generateMAC(),
-          ipAddress: `10.${randomInt(0, 254)}.${randomInt(0, 254)}.${randomInt(
-            2,
-            254
-          )}`,
+          ipAddress: `10.205.201.${randomInt(10, 254)}`,
+          membershipNumber: `${randomInt(100000, 999999)}`,
         });
       }
     }
@@ -1677,37 +1727,20 @@ const seedDatabase = async () => {
           today.getDate()
         );
       } else if (renewalCategories.thisMonth.includes(idx)) {
-        // Renewal this month (but not today)
-        const maxDay = Math.min(
-          currentMonthEnd.getDate(),
-          MAX_SEED_DATE.getDate()
+        // Renewal this month (pending/upcoming in current month)
+        const renewalDay = randomInt(1, currentMonthEnd.getDate());
+        nextRenewalDate = new Date(
+          effectiveNow.getFullYear(),
+          effectiveNow.getMonth(),
+          renewalDay
         );
-        const renewalDay = randomInt(1, maxDay);
-        if (renewalDay < today.getDate()) {
-          nextRenewalDate = new Date(
-            effectiveNow.getFullYear(),
-            effectiveNow.getMonth(),
-            renewalDay
-          );
-          lastRenewalDate = new Date(
-            effectiveNow.getFullYear(),
-            effectiveNow.getMonth() - 1,
-            renewalDay
-          );
-        } else {
-          nextRenewalDate = new Date(
-            effectiveNow.getFullYear(),
-            effectiveNow.getMonth(),
-            renewalDay
-          );
-          lastRenewalDate = new Date(
-            effectiveNow.getFullYear(),
-            effectiveNow.getMonth() - 1,
-            renewalDay
-          );
-        }
+        lastRenewalDate = new Date(
+          effectiveNow.getFullYear(),
+          effectiveNow.getMonth() - 1,
+          renewalDay
+        );
       } else if (renewalCategories.nextMonth.includes(idx)) {
-        // Renewal next month onwards - but cap at MAX_SEED_DATE
+        // Renewal next month onwards (upcoming renewals)
         const monthsAhead = randomInt(1, 3);
         const renewalDay = randomInt(1, 15);
         nextRenewalDate = new Date(
@@ -1715,20 +1748,11 @@ const seedDatabase = async () => {
           effectiveNow.getMonth() + monthsAhead,
           renewalDay
         );
-        // Cap at MAX_SEED_DATE
-        if (nextRenewalDate > MAX_SEED_DATE) {
-          nextRenewalDate = new Date(MAX_SEED_DATE);
-        }
         lastRenewalDate = new Date(
           effectiveNow.getFullYear(),
           effectiveNow.getMonth() + monthsAhead - 1,
           renewalDay
         );
-        // Cap at MAX_SEED_DATE
-        if (lastRenewalDate > MAX_SEED_DATE) {
-          lastRenewalDate = new Date(MAX_SEED_DATE);
-          lastRenewalDate.setMonth(lastRenewalDate.getMonth() - 1);
-        }
       } else {
         // Expired renewal (past date)
         const daysPast = randomInt(1, 30);
@@ -1738,10 +1762,7 @@ const seedDatabase = async () => {
         lastRenewalDate.setMonth(lastRenewalDate.getMonth() - 1);
       }
 
-      // Ensure both dates don't exceed MAX_SEED_DATE
-      if (nextRenewalDate > MAX_SEED_DATE) {
-        nextRenewalDate = new Date(MAX_SEED_DATE);
-      }
+      // Ensure lastRenewalDate doesn't exceed MAX_SEED_DATE
       if (lastRenewalDate > MAX_SEED_DATE) {
         lastRenewalDate = new Date(MAX_SEED_DATE);
         lastRenewalDate.setMonth(lastRenewalDate.getMonth() - 1);
@@ -1766,24 +1787,31 @@ const seedDatabase = async () => {
       });
 
       for (const { year, month } of monthsBack) {
-        // Skip months that are after November 2025
-        if (year > 2025 || (year === 2025 && month > 11)) {
+        // Skip months that are in the future
+        if (
+          year > now.getFullYear() ||
+          (year === now.getFullYear() && month > now.getMonth() + 1)
+        ) {
           continue;
         }
 
+        const isCurrentMonth =
+          year === now.getFullYear() && month === now.getMonth() + 1;
+
         const periodStart = new Date(year, month - 1, 1);
         let periodEnd = new Date(year, month, 0);
-        // If this is November 2025, cap periodEnd at Nov 12
-        if (year === 2025 && month === 11) {
-          periodEnd = new Date(2025, 10, 12);
+        if (isCurrentMonth) {
+          periodEnd = new Date(now);
         }
-        // Ensure periodEnd doesn't exceed MAX_SEED_DATE
         if (periodEnd > MAX_SEED_DATE) {
           periodEnd = new Date(MAX_SEED_DATE);
         }
 
-        const maxDueDay = year === 2025 && month === 11 ? 12 : 22;
-        const dueDate = new Date(year, month - 1, randomInt(10, maxDueDay));
+        const maxDueDay = isCurrentMonth
+          ? Math.max(10, Math.min(22, now.getDate()))
+          : 22;
+        const dueDay = Math.min(maxDueDay, randomInt(10, Math.max(10, maxDueDay)));
+        const dueDate = new Date(year, month - 1, dueDay);
         // Cap dueDate at MAX_SEED_DATE
         if (dueDate > MAX_SEED_DATE) {
           dueDate.setTime(MAX_SEED_DATE.getTime());
@@ -2128,7 +2156,145 @@ const seedDatabase = async () => {
       }
     }
 
+    // --- 9. Hardware Inventory & Customer Hardware ---
+    console.log("Seeding Hardware Inventory and Customer Hardware...");
+    const inventoryPayload = [];
+    const usedInventoryMacs = new Set();
+    const routerBrands = [
+      "Ubiqom",
+      "",
+      "",
+      "",
+      "Tenda Del",
+      "",
+      "",
+      "Tenda Del",
+      "Tplink Del",
+      "Tenda Del",
+    ];
+
+    // Map hardwareData items to Inventory with status WITH_CUSTOMER
+    for (let i = 0; i < hardwareData.length; i++) {
+      const hw = hardwareData[i];
+      let mac = hw.macAddress;
+      if (usedInventoryMacs.has(mac)) {
+        mac = generateMAC();
+        hw.macAddress = mac;
+      }
+      usedInventoryMacs.add(mac);
+
+      const brand = routerBrands[i % routerBrands.length] || "Router";
+      const serialNum = `RTR-${String(Math.max(1, 400 - i)).padStart(3, "0")}`;
+
+      inventoryPayload.push({
+        companyId: company.id,
+        category: "Router",
+        deviceName: brand || null,
+        macAddress: mac,
+        ipAddress: hw.ipAddress || null,
+        serialNumber: serialNum,
+        membershipNumber: hw.membershipNumber || null,
+        status: "WITH_CUSTOMER",
+        customerId: hw.customerId,
+        purchaseCost: 1500.0,
+        notes: "Initial customer deployment",
+        isActive: true,
+      });
+    }
+
+    // Add 5 AVAILABLE devices as seen in reference images (Image 1, 4, 5)
+    const availableDevices = [
+      {
+        macAddress: "A8:6E:84:74:2B:C9",
+        serialNumber: "RTR-243",
+        ipAddress: "10.205.100.66",
+        deviceName: "TP-Link WR841N",
+        category: "Router",
+        membershipNumber: "410326",
+      },
+      {
+        macAddress: "04:95:E6:A1:F0:E0",
+        serialNumber: "RTR-238",
+        ipAddress: "10.205.100.64",
+        deviceName: "D-Link DIR-615",
+        category: "Router",
+        membershipNumber: "410327",
+      },
+      {
+        macAddress: "10205100144",
+        serialNumber: "RTR-009",
+        ipAddress: null,
+        deviceName: "Tenda Del",
+        category: "Router",
+        membershipNumber: "410328",
+      },
+      {
+        macAddress: "103.165.95.91",
+        serialNumber: "RTR-160",
+        ipAddress: "103.165.95.91",
+        deviceName: "Ubiqom",
+        category: "Router",
+        membershipNumber: "410329",
+      },
+      {
+        macAddress: "10205100125",
+        serialNumber: "RTR-046",
+        ipAddress: null,
+        deviceName: "Tplink Del",
+        category: "Router",
+        membershipNumber: "410330",
+      },
+    ];
+
+    for (const dev of availableDevices) {
+      usedInventoryMacs.add(dev.macAddress);
+      inventoryPayload.push({
+        companyId: company.id,
+        category: dev.category,
+        deviceName: dev.deviceName,
+        macAddress: dev.macAddress,
+        ipAddress: dev.ipAddress,
+        serialNumber: dev.serialNumber,
+        membershipNumber: dev.membershipNumber,
+        status: "AVAILABLE",
+        customerId: null,
+        purchaseCost: 1200.0,
+        notes: "In warehouse stock",
+        isActive: true,
+      });
+    }
+
+    const createdInventories = await models.Inventory.bulkCreate(
+      inventoryPayload
+    );
+
+    // Link inventoryId back into hardwareData
+    for (let i = 0; i < hardwareData.length; i++) {
+      hardwareData[i].inventoryId = createdInventories[i].id;
+    }
+
     await models.CustomerHardware.bulkCreate(hardwareData);
+
+    // Seed some initial inventory logs for audit trail
+    const sampleLogs = [];
+    for (let i = 0; i < Math.min(20, createdInventories.length); i++) {
+      sampleLogs.push({
+        companyId: company.id,
+        inventoryId: createdInventories[i].id,
+        customerId: createdInventories[i].customerId,
+        action: createdInventories[i].customerId ? "ASSIGNED" : "CREATED",
+        previousStatus: createdInventories[i].customerId
+          ? "AVAILABLE"
+          : null,
+        newStatus: createdInventories[i].status,
+        performedBy: admins[0].id,
+        notes: createdInventories[i].customerId
+          ? "Customer initial onboarding"
+          : "Initial stock received",
+      });
+    }
+    await models.InventoryLog.bulkCreate(sampleLogs);
+    console.log("Hardware Inventory seeded.");
 
     // --- Additional current-month collections (varied dates) ---
     console.log("Adding additional current-month collection data...");
@@ -2150,16 +2316,21 @@ const seedDatabase = async () => {
         if (Math.random() > 0.4) {
           let periodStart = new Date(currentYear, currentMonth - 1, 1);
           let periodEnd = new Date(currentYear, currentMonth, 0);
-          // If this is November 2025, cap periodEnd at Nov 12
-          if (currentYear === 2025 && currentMonth === 11) {
-            periodEnd = new Date(2025, 10, 12);
+          if (
+            currentYear === now.getFullYear() &&
+            currentMonth === now.getMonth() + 1
+          ) {
+            periodEnd = new Date(now);
           }
-          // Ensure periodEnd doesn't exceed MAX_SEED_DATE
           if (periodEnd > MAX_SEED_DATE) {
             periodEnd = new Date(MAX_SEED_DATE);
           }
 
-          let dueDate = new Date(currentYear, currentMonth - 1, 15);
+          let dueDate = new Date(
+            currentYear,
+            currentMonth - 1,
+            Math.min(15, now.getDate())
+          );
           // Cap dueDate at MAX_SEED_DATE
           if (dueDate > MAX_SEED_DATE) {
             dueDate = new Date(MAX_SEED_DATE);
@@ -2587,6 +2758,123 @@ const seedDatabase = async () => {
         }
       }
     }
+
+    // --- 11. Complaints and Comments ---
+    console.log("Seeding Complaints and Complaint Comments...");
+    const sampleComplaintsData = [
+      {
+        message: "Frequent internet disconnection and high ping during evening hours.",
+        status: "OPEN",
+        comment: "Customer reported issue started 2 days ago after heavy rain.",
+      },
+      {
+        message: "Fiber cable damaged due to municipal drainage construction work. Complete outage.",
+        status: "IN_PROGRESS",
+        comment: "Technician dispatched to re-pull fiber from nearest distribution pole.",
+      },
+      {
+        message: "Router power LED blinking red, unable to connect to WiFi or LAN.",
+        status: "OPEN",
+        comment: "Advised customer to restart ONT. Issue persists, site visit scheduled.",
+      },
+      {
+        message: "Speed test shows only 12 Mbps on 100 Mbps fiber plan on both 2.4G and 5G.",
+        status: "RESOLVED",
+        comment: "Optical power level was -31 dBm. Cleaned connector and re-spliced; power restored to -18 dBm. Speed confirmed at 98 Mbps.",
+      },
+      {
+        message: "Requesting optical fiber router relocation from living room to first-floor home office.",
+        status: "IN_PROGRESS",
+        comment: "Agent assigned for internal cabling and patch cord extension.",
+      },
+      {
+        message: "Intermittent connection drop every 20-30 minutes, VoIP calls dropping.",
+        status: "OPEN",
+        comment: "Monitoring link logs for flap events.",
+      },
+      {
+        message: "Optical fiber patch cord damaged by pet in hallway. Red LOS light on router.",
+        status: "RESOLVED",
+        comment: "Replaced 5m SC-APC patch cord. Fiber link restored.",
+      },
+      {
+        message: "Unable to access corporate VPN portal through broadband line.",
+        status: "IN_PROGRESS",
+        comment: "Checked MTU and DNS routing. Escalated to network admin for firewall inspection.",
+      },
+      {
+        message: "Billing discrepancy: charged additional charge on latest invoice.",
+        status: "RESOLVED",
+        comment: "Customer care verified plan add-on. Credit note adjustment applied.",
+      },
+      {
+        message: "Static IP configuration required for CCTV NVR remote viewing.",
+        status: "IN_PROGRESS",
+        comment: "Static IP allocated from subnet. Coordinating on-site router port forwarding.",
+      },
+      {
+        message: "WiFi signal does not reach bedrooms on second floor. Requesting mesh ONT or range extender.",
+        status: "OPEN",
+        comment: "Scheduled site survey for extender installation.",
+      },
+      {
+        message: "PON light off completely on fiber modem. No internet service since morning.",
+        status: "RESOLVED",
+        comment: "Replaced faulty power adapter of ONT device. Device powered on and PON synced.",
+      },
+      {
+        message: "Packet loss observed during office video calls on Zoom and Teams.",
+        status: "OPEN",
+        comment: "Line test conducted; ping latency test running.",
+      },
+      {
+        message: "Customer paid renewal bill online but account status shows pending renewal.",
+        status: "RESOLVED",
+        comment: "Payment matched with gateway transaction reference and account manually refreshed.",
+      },
+      {
+        message: "Fiber drop cable hanging low across road due to tree branches.",
+        status: "IN_PROGRESS",
+        comment: "Field lineman team informed to tension and tie drop wire to pole hooks.",
+      },
+    ];
+
+    const complaintCustomers = customers.slice(0, Math.min(sampleComplaintsData.length, customers.length));
+    for (let i = 0; i < complaintCustomers.length; i++) {
+      const sample = sampleComplaintsData[i];
+      const customer = complaintCustomers[i];
+      const assignedAgent = sample.status !== "OPEN" ? getRandomItem(agents) : (Math.random() > 0.5 ? getRandomItem(agents) : null);
+      const createdByUser = getRandomItem([...admins, ...agents]);
+
+      const complaint = await models.Complaint.create({
+        companyId: company.id,
+        customerId: customer.id,
+        assignedAgentId: assignedAgent ? assignedAgent.id : null,
+        status: sample.status,
+        message: sample.message,
+        createdBy: createdByUser.id,
+        isActive: true,
+      });
+
+      if (sample.comment) {
+        await models.ComplaintComment.create({
+          complaintId: complaint.id,
+          comment: sample.comment,
+          createdBy: assignedAgent ? assignedAgent.id : admins[0].id,
+          isActive: true,
+        });
+      }
+
+      if (sample.status === "RESOLVED") {
+        await models.ComplaintComment.create({
+          complaintId: complaint.id,
+          comment: "Ticket verified with subscriber and marked as resolved.",
+          createdBy: admins[0].id,
+          isActive: true,
+        });
+      }
+    }
+    console.log("Complaints and Comments seeded.");
 
     console.log("All data seeded.");
     console.log("\n✅ Database seeding completed successfully!");

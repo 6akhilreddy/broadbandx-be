@@ -50,7 +50,7 @@ User.beforeCreate(async (user) => {
 });
 
 User.beforeUpdate(async (user) => {
-  if (user.passwordHash) {
+  if (user.changed("passwordHash") && user.passwordHash) {
     user.passwordHash = await bcrypt.hash(user.passwordHash, 10);
   }
 });

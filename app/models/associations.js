@@ -24,6 +24,9 @@ const defineAssociations = (models = null) => {
     models?.ComplaintComment || require("../models/ComplaintComment");
   const CustomerDocument =
     models?.CustomerDocument || require("../models/CustomerDocument");
+  const Inventory = models?.Inventory || require("../models/Inventory");
+  const InventoryLog =
+    models?.InventoryLog || require("../models/InventoryLog");
   // 🔹 Area Associations 🔹
   // Area belongs to Company and User (createdBy)
   Company.hasMany(Area, { foreignKey: "companyId", onDelete: "CASCADE" });
@@ -258,6 +261,43 @@ const defineAssociations = (models = null) => {
   ComplaintComment.belongsTo(User, {
     as: "CreatedBy",
     foreignKey: "createdBy",
+  });
+
+  // 🔹 Inventory Associations 🔹
+  Company.hasMany(Inventory, { foreignKey: "companyId", onDelete: "CASCADE" });
+  Inventory.belongsTo(Company, { foreignKey: "companyId" });
+
+  Customer.hasMany(Inventory, {
+    foreignKey: "customerId",
+    as: "Inventories",
+  });
+  Inventory.belongsTo(Customer, {
+    foreignKey: "customerId",
+    as: "Customer",
+  });
+
+  CustomerHardware.belongsTo(Inventory, {
+    foreignKey: "inventoryId",
+    as: "InventoryItem",
+  });
+  Inventory.hasOne(CustomerHardware, {
+    foreignKey: "inventoryId",
+    as: "CustomerHardware",
+  });
+
+  Inventory.hasMany(InventoryLog, {
+    foreignKey: "inventoryId",
+    as: "Logs",
+    onDelete: "CASCADE",
+  });
+  InventoryLog.belongsTo(Inventory, { foreignKey: "inventoryId" });
+  InventoryLog.belongsTo(Customer, {
+    foreignKey: "customerId",
+    as: "Customer",
+  });
+  InventoryLog.belongsTo(User, {
+    foreignKey: "performedBy",
+    as: "Performer",
   });
 };
 

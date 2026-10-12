@@ -218,7 +218,7 @@ async function generateInitialInvoice(
       customerId: customer.id,
       type: "INVOICE",
       direction: "DEBIT",
-      amount: invoiceAmount,
+      amount: periodCharges,
       balanceBefore,
       balanceAfter,
       description: `Subscription invoice ${billingStartDate} to ${periodEnd}`,
@@ -279,9 +279,11 @@ async function renewCustomerBilling(customer, subscriptions, companyId, createdB
 
   const totals = calculateInvoiceTotals(customer, activeSubs, cycleMultiplier);
   const prevBalance = await getCurrentBalance(customer.id, companyId);
+  const periodCharges = totals.amountBeforeOpening;
   const invoiceAmount =
-    Math.round((totals.amountBeforeOpening + (prevBalance > 0 ? prevBalance : 0)) * 100) /
+    Math.round((periodCharges + (prevBalance > 0 ? prevBalance : 0)) * 100) /
     100;
+  const balanceAfter = Math.round((prevBalance + periodCharges) * 100) / 100;
 
   for (const sub of activeSubs) {
     await sub.update(
@@ -310,9 +312,9 @@ async function renewCustomerBilling(customer, subscriptions, companyId, createdB
       customerId: customer.id,
       type: "INVOICE",
       direction: "DEBIT",
-      amount: invoiceAmount,
+      amount: periodCharges,
       balanceBefore: prevBalance,
-      balanceAfter: Math.round((prevBalance + invoiceAmount) * 100) / 100,
+      balanceAfter,
       description: `Subscription invoice ${periodStart} to ${periodEnd}`,
       referenceType: "invoice",
       transactionDate: new Date(),

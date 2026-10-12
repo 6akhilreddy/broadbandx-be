@@ -14,6 +14,8 @@ const Area = require("./Area");
 const Complaint = require("./Complaint");
 const ComplaintComment = require("./ComplaintComment");
 const CustomerDocument = require("./CustomerDocument");
+const Inventory = require("./Inventory");
+const InventoryLog = require("./InventoryLog");
 const sequelize = require("../config/db");
 
 const defineAssociations = require("./associations");
@@ -36,6 +38,8 @@ defineAssociations({
   Complaint,
   ComplaintComment,
   CustomerDocument,
+  Inventory,
+  InventoryLog,
 });
 
 module.exports = {
@@ -56,4 +60,6 @@ module.exports = {
   Complaint,
   ComplaintComment,
   CustomerDocument,
+  Inventory,
+  InventoryLog,
 };

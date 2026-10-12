@@ -11,6 +11,16 @@ const {
   generatePaymentNumber,
 } = require("../utils/financeUtils");
 
+const normalizePaymentMethod = (m) => {
+  if (!m) return "CASH";
+  const str = String(m).trim();
+  if (str.toUpperCase() === "PHONEPE") return "PhonePe";
+  if (["UPI", "CASH", "BHIM", "CARD"].includes(str.toUpperCase())) {
+    return str.toUpperCase();
+  }
+  return str;
+};
+
 // Search customers for payment recording
 const searchCustomers = async (req, res) => {
   try {
@@ -242,8 +252,12 @@ const recordPayment = async (req, res) => {
 
     // Get current balance
     const currentBalance = await getCurrentBalance(customerId, companyId);
-    const paymentAmount = parseFloat(amount) - (parseFloat(discount) || 0);
-    const newBalance = Math.max(0, currentBalance - paymentAmount);
+    const cashAmount = parseFloat(amount) || 0;
+    const discountAmount = parseFloat(discount) || 0;
+    const totalCredit = Math.round((cashAmount + discountAmount) * 100) / 100;
+    const newBalance = Math.max(0, Math.round((currentBalance - totalCredit) * 100) / 100);
+
+    const normalizedMethod = normalizePaymentMethod(method);
 
     // Create transaction first
     const paymentTransaction = await Transaction.create(
@@ -252,12 +266,12 @@ const recordPayment = async (req, res) => {
         customerId,
         type: "PAYMENT",
         direction: "CREDIT",
-        amount: paymentAmount,
+        amount: totalCredit,
         balanceBefore: currentBalance,
         balanceAfter: newBalance,
-        description: `Payment of ₹${paymentAmount.toFixed(
+        description: `Payment of ₹${cashAmount.toFixed(
           2
-        )} via ${method.toUpperCase()}${comments ? ` - ${comments}` : ""}`,
+        )} via ${normalizedMethod}${discountAmount > 0 ? ` (Discount: ₹${discountAmount.toFixed(2)})` : ""}${comments ? ` - ${comments}` : ""}`,
         referenceType: "payment",
         transactionDate: new Date(),
         createdBy: req.user.id,
@@ -273,9 +287,9 @@ const recordPayment = async (req, res) => {
         companyId,
         customerId,
         invoiceId: invoiceId || null, // Optional - for reference only
-        amount: paymentAmount,
-        discount: parseFloat(discount) || 0,
-        method: method.toUpperCase(),
+        amount: cashAmount,
+        discount: discountAmount,
+        method: normalizedMethod,
         collectedBy: req.user.id,
         collectedAt: new Date(),
         comments: comments || "",
@@ -442,14 +456,16 @@ const deletePayment = async (req, res) => {
   const dbTransaction = await sequelize.transaction();
   try {
     const { paymentId } = req.params;
-    const { companyId } = req.user;
+    const where = {
+      id: paymentId,
+      isActive: true,
+    };
+    if (req.user.roleCode !== "SUPER_ADMIN" && req.user.companyId) {
+      where.companyId = req.user.companyId;
+    }
 
     const payment = await Payment.findOne({
-      where: {
-        id: paymentId,
-        companyId,
-        isActive: true,
-      },
+      where,
       include: [
         {
           model: Transaction,
@@ -470,7 +486,7 @@ const deletePayment = async (req, res) => {
       const latestTransaction = await Transaction.findOne({
         where: {
           customerId: payment.customerId,
-          companyId,
+          companyId: payment.companyId,
           isActive: true,
         },
         order: [
@@ -527,14 +543,16 @@ const deletePayment = async (req, res) => {
 const getPaymentDetails = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const { companyId } = req.user;
+    const where = {
+      id: paymentId,
+      isActive: true,
+    };
+    if (req.user.roleCode !== "SUPER_ADMIN" && req.user.companyId) {
+      where.companyId = req.user.companyId;
+    }
 
     const payment = await Payment.findOne({
-      where: {
-        id: paymentId,
-        companyId,
-        isActive: true,
-      },
+      where,
       include: [
         {
           model: Transaction,

@@ -11,6 +11,7 @@ const CustomerHardware = sequelize.define(
       autoIncrement: true,
     },
     customerId: { type: DataTypes.INTEGER, allowNull: false },
+    inventoryId: { type: DataTypes.INTEGER, allowNull: true },
     deviceType: { type: DataTypes.STRING },
     macAddress: { type: DataTypes.STRING, unique: true },
     ipAddress: { type: DataTypes.STRING },

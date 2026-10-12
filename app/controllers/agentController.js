@@ -151,15 +151,26 @@ exports.getAllAgents = async (req, res) => {
           },
         });
 
-        // Get last month collection
-        const lastMonthStart = new Date();
-        lastMonthStart.setMonth(lastMonthStart.getMonth() - 1);
-        lastMonthStart.setDate(1);
-        lastMonthStart.setHours(0, 0, 0, 0);
-
-        const lastMonthEnd = new Date();
-        lastMonthEnd.setDate(0);
-        lastMonthEnd.setHours(23, 59, 59, 999);
+        // Get last month collection safely avoiding month rollover bugs
+        const now = new Date();
+        const lastMonthStart = new Date(
+          now.getFullYear(),
+          now.getMonth() - 1,
+          1,
+          0,
+          0,
+          0,
+          0
+        );
+        const lastMonthEnd = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          0,
+          23,
+          59,
+          59,
+          999
+        );
 
         const lastMonthCollection = await Payment.sum("amount", {
           where: {
@@ -435,19 +446,14 @@ exports.getAgentPaymentHistory = async (req, res) => {
     // Calculate pagination
     const offset = (page - 1) * limit;
 
-    // Get payments with customer information through invoice
+    // Get payments with customer information
     const { count, rows: payments } = await Payment.findAndCountAll({
       where: whereClause,
       include: [
         {
-          model: Invoice,
-          attributes: ["id"],
-          include: [
-            {
-              model: Customer,
-              attributes: ["id", "fullName", "address"],
-            },
-          ],
+          model: Customer,
+          attributes: ["id", "fullName", "address"],
+          required: false,
         },
       ],
       order: [["collectedAt", "DESC"]],
@@ -467,11 +473,11 @@ exports.getAgentPaymentHistory = async (req, res) => {
         paymentMethod: payment.method,
         collectedAt: payment.collectedAt,
         status: "COMPLETED", // Assuming all payments are completed
-        customer: payment.Invoice?.Customer
+        customer: payment.Customer
           ? {
-              id: payment.Invoice.Customer.id,
-              name: payment.Invoice.Customer.fullName,
-              address: payment.Invoice.Customer.address,
+              id: payment.Customer.id,
+              name: payment.Customer.fullName,
+              address: payment.Customer.address,
             }
           : null,
       })),

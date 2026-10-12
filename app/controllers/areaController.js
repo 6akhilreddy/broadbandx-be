@@ -1,10 +1,23 @@
 const Area = require("../models/Area");
 const { Op } = require("sequelize");
 
+const getCompanyId = (req) => {
+  if (req.userRoleCode === "SUPER_ADMIN") {
+    return (
+      req.query?.companyId ||
+      req.body?.companyId ||
+      req.userCompanyId ||
+      req.user?.companyId
+    );
+  }
+  return req.userCompanyId || req.user?.companyId;
+};
+
 // Get all Areas for a company
 exports.getAllAreas = async (req, res) => {
   try {
-    const { companyId, search = "" } = req.query;
+    const companyId = getCompanyId(req);
+    const { search = "" } = req.query;
 
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
@@ -31,7 +44,7 @@ exports.getAllAreas = async (req, res) => {
 // Get Area by ID
 exports.getAreaById = async (req, res) => {
   try {
-    const { companyId } = req.query;
+    const companyId = getCompanyId(req);
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
     }
@@ -53,7 +66,9 @@ exports.getAreaById = async (req, res) => {
 // Create Area
 exports.createArea = async (req, res) => {
   try {
-    const { companyId, areaName, createdBy } = req.body;
+    const companyId = getCompanyId(req);
+    const { areaName } = req.body;
+    const createdBy = req.user?.id || req.body.createdBy;
 
     if (!companyId || !areaName || !createdBy) {
       return res
@@ -76,7 +91,8 @@ exports.createArea = async (req, res) => {
 // Update Area
 exports.updateArea = async (req, res) => {
   try {
-    const { companyId, areaName } = req.body;
+    const companyId = getCompanyId(req);
+    const { areaName } = req.body;
 
     if (!companyId || !areaName) {
       return res
@@ -102,7 +118,7 @@ exports.updateArea = async (req, res) => {
 // Delete Area
 exports.deleteArea = async (req, res) => {
   try {
-    const { companyId } = req.query;
+    const companyId = getCompanyId(req);
 
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });

@@ -194,29 +194,30 @@ const getPaymentHistory = async (req, res) => {
       where: whereClause,
       include: [
         {
-          model: Invoice,
+          model: Customer,
+          where: search
+            ? {
+                [Op.or]: [
+                  { fullName: { [Op.iLike]: `%${search}%` } },
+                  { phone: { [Op.iLike]: `%${search}%` } },
+                ],
+              }
+            : {},
           include: [
             {
-              model: Customer,
-              where: search
-                ? {
-                    [Op.or]: [
-                      { fullName: { [Op.iLike]: `%${search}%` } },
-                      { phone: { [Op.iLike]: `%${search}%` } },
-                    ],
-                  }
-                : {},
-              include: [
-                {
-                  model: Area,
-                  where: areaId ? { id: areaId } : {},
-                  attributes: ["id", "areaName"],
-                },
-              ],
-              attributes: ["id", "fullName", "customerCode", "phone", "areaId"],
+              model: Area,
+              where: areaId ? { id: areaId } : {},
+              attributes: ["id", "areaName"],
+              required: false,
             },
           ],
-          attributes: ["id", "subtotal", "discounts", "amountTotal", "status"],
+          attributes: ["id", "fullName", "customerCode", "phone", "areaId"],
+          required: true,
+        },
+        {
+          model: Invoice,
+          attributes: ["id", "subtotal", "discounts", "amountTotal"],
+          required: false,
         },
         {
           model: User,
@@ -235,18 +236,28 @@ const getPaymentHistory = async (req, res) => {
       method: payment.method,
       collectedAt: payment.collectedAt,
       comments: payment.comments,
-      customer: {
-        id: payment.Invoice.Customer.id,
-        name: payment.Invoice.Customer.fullName,
-        customerCode: payment.Invoice.Customer.customerCode,
-        phone: payment.Invoice.Customer.phone,
-        area: payment.Invoice.Customer.Area?.areaName || "Unknown Area",
-      },
-      invoice: {
-        id: payment.Invoice.id,
-        amountTotal: payment.Invoice.amountTotal,
-        type: payment.Invoice.type,
-      },
+      customer: payment.Customer
+        ? {
+            id: payment.Customer.id,
+            name: payment.Customer.fullName,
+            customerCode: payment.Customer.customerCode,
+            phone: payment.Customer.phone,
+            area: payment.Customer.Area?.areaName || "Unknown Area",
+          }
+        : {
+            id: null,
+            name: "Unknown",
+            customerCode: "",
+            phone: "",
+            area: "Unknown Area",
+          },
+      invoice: payment.Invoice
+        ? {
+            id: payment.Invoice.id,
+            amountTotal: payment.Invoice.amountTotal,
+            type: payment.Invoice.type,
+          }
+        : null,
       collector: payment.collector?.name || "Unknown",
     }));
 
@@ -323,18 +334,19 @@ const getUserHistory = async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    // Get all payments for the customer (through invoices)
+    // Get all payments for the customer
     const payments = await Payment.findAll({
       where: {
-        invoiceId: {
-          [Op.in]: invoices.map((inv) => inv.id),
-        },
+        customerId,
+        companyId: companyId || req.user.companyId,
+        isActive: true,
         ...(Object.keys(dateFilter).length > 0 && { collectedAt: dateFilter }),
       },
       include: [
         {
           model: Invoice,
-          attributes: ["id", "amountTotal", "status"],
+          attributes: ["id", "amountTotal"],
+          required: false,
         },
         {
           model: User,
@@ -520,7 +532,7 @@ const getAllInvoices = async (req, res) => {
           attributes: ["id", "fullName", "customerCode"],
         },
       ],
-      attributes: ["id", "amountTotal", "status", "createdAt"],
+      attributes: ["id", "amountTotal", "type", "createdAt"],
       limit: 10,
     });
 

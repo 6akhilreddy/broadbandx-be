@@ -1,6 +1,8 @@
 const { Op } = require("sequelize");
 const Customer = require("../models/Customer");
 const CustomerHardware = require("../models/CustomerHardware");
+const Inventory = require("../models/Inventory");
+const InventoryLog = require("../models/InventoryLog");
 const Subscription = require("../models/Subscription");
 const Plan = require("../models/Plan");
 const Invoice = require("../models/Invoice");
@@ -19,6 +21,9 @@ const {
   generateInvoiceNumber,
   generatePaymentNumber,
 } = require("../utils/financeUtils");
+const {
+  calculateNextRenewalDate,
+} = require("../utils/billingUtils");
 const {
   getManagedAgentIds,
   buildCustomerWhere,
@@ -288,14 +293,128 @@ exports.createCustomer = async (req, res) => {
       customer.assignedAgentId = req.user.id;
     }
 
+    customer.companyId = companyId;
+    if (req.user?.id) {
+      customer.createdBy = req.user.id;
+    }
+
     const newCustomer = await Customer.create(customer, {
       transaction: dbTransaction,
     });
 
-    if (hardware) {
-      hardware.customerId = newCustomer.id;
-      if (hardware.macAddress === "") hardware.macAddress = null;
-      await CustomerHardware.create(hardware, { transaction: dbTransaction });
+    // Support multiple hardware devices (hardwareList) or single hardware object
+    const itemsToProcess = [];
+    if (
+      Array.isArray(req.body.hardwareList) &&
+      req.body.hardwareList.length > 0
+    ) {
+      itemsToProcess.push(...req.body.hardwareList);
+    } else if (
+      hardware &&
+      (hardware.macAddress ||
+        hardware.deviceType ||
+        hardware.ipAddress ||
+        hardware.inventoryId)
+    ) {
+      itemsToProcess.push(hardware);
+    }
+
+    for (const hwItem of itemsToProcess) {
+      const cleanMac = hwItem.macAddress ? hwItem.macAddress.trim() : null;
+      let linkedInventoryId = hwItem.inventoryId || null;
+
+      if (linkedInventoryId) {
+        // Selected from available stock
+        const inv = await Inventory.findByPk(linkedInventoryId, {
+          transaction: dbTransaction,
+        });
+        if (inv) {
+          await inv.update(
+            { status: "WITH_CUSTOMER", customerId: newCustomer.id },
+            { transaction: dbTransaction }
+          );
+          await InventoryLog.create(
+            {
+              companyId,
+              inventoryId: inv.id,
+              customerId: newCustomer.id,
+              action: "ASSIGNED",
+              previousStatus: "AVAILABLE",
+              newStatus: "WITH_CUSTOMER",
+              performedBy: req.user?.id || null,
+              notes: "Assigned during customer onboarding",
+            },
+            { transaction: dbTransaction }
+          );
+        }
+      } else if (cleanMac) {
+        // Added manually - auto-create in Inventory
+        const existingInv = await Inventory.findOne({
+          where: { macAddress: cleanMac, companyId },
+          transaction: dbTransaction,
+        });
+
+        if (existingInv) {
+          linkedInventoryId = existingInv.id;
+          await existingInv.update(
+            { status: "WITH_CUSTOMER", customerId: newCustomer.id },
+            { transaction: dbTransaction }
+          );
+          await InventoryLog.create(
+            {
+              companyId,
+              inventoryId: existingInv.id,
+              customerId: newCustomer.id,
+              action: "ASSIGNED",
+              previousStatus: existingInv.status,
+              newStatus: "WITH_CUSTOMER",
+              performedBy: req.user?.id || null,
+              notes: "Assigned existing hardware during customer onboarding",
+            },
+            { transaction: dbTransaction }
+          );
+        } else {
+          const newInv = await Inventory.create(
+            {
+              companyId,
+              category: hwItem.deviceType || hwItem.category || "Router",
+              deviceName: hwItem.deviceName || hwItem.deviceType || "Router",
+              macAddress: cleanMac,
+              ipAddress: hwItem.ipAddress || null,
+              membershipNumber: hwItem.membershipNumber || null,
+              status: "WITH_CUSTOMER",
+              customerId: newCustomer.id,
+              isActive: true,
+            },
+            { transaction: dbTransaction }
+          );
+          linkedInventoryId = newInv.id;
+          await InventoryLog.create(
+            {
+              companyId,
+              inventoryId: newInv.id,
+              customerId: newCustomer.id,
+              action: "CREATED",
+              newStatus: "WITH_CUSTOMER",
+              performedBy: req.user?.id || null,
+              notes: "Added & assigned during customer onboarding",
+            },
+            { transaction: dbTransaction }
+          );
+        }
+      }
+
+      await CustomerHardware.create(
+        {
+          customerId: newCustomer.id,
+          inventoryId: linkedInventoryId,
+          deviceType: hwItem.deviceType || hwItem.category || "Router",
+          macAddress: cleanMac,
+          ipAddress: hwItem.ipAddress || null,
+          membershipNumber: hwItem.membershipNumber || null,
+        },
+        { transaction: dbTransaction }
+      );
     }
 
     let subscriptions = [];
@@ -422,7 +541,7 @@ exports.getAllCustomers = async (req, res) => {
     }
 
     // Fetch customers
-    const { rows: customers, count: total } = await Customer.findAndCountAll({
+    const queryOptions = {
       attributes: [
         "id",
         "fullName",
@@ -444,14 +563,19 @@ exports.getAllCustomers = async (req, res) => {
           model: Subscription,
           attributes: ["nextRenewalDate", "status"],
           where: subscriptionWhere,
-          required: renewalStatus ? true : false, // If filtering by renewal, require subscription
+          required: renewalStatus ? true : false,
         },
       ],
       order: [["createdAt", "DESC"]],
-      limit: parseInt(limit),
-      offset: offset,
-      distinct: true, // Important when using includes with where clauses
-    });
+      distinct: true,
+    };
+
+    if (!paymentStatus) {
+      queryOptions.limit = parseInt(limit);
+      queryOptions.offset = offset;
+    }
+
+    const { rows: customers, count: total } = await Customer.findAndCountAll(queryOptions);
 
     // Get balances for all customers
     const companyId =
@@ -482,7 +606,6 @@ exports.getAllCustomers = async (req, res) => {
       })
     );
 
-    // Filter by payment status if specified (renewal status is already filtered at DB level)
     let finalCustomers = transformedCustomers;
     let actualTotal = total;
 
@@ -497,14 +620,10 @@ exports.getAllCustomers = async (req, res) => {
       });
       actualTotal = finalCustomers.length;
 
-      // Apply pagination after filtering (only needed for paymentStatus which is filtered in JavaScript)
       const startIndex = (parseInt(page) - 1) * parseInt(limit);
       const endIndex = startIndex + parseInt(limit);
       finalCustomers = finalCustomers.slice(startIndex, endIndex);
     }
-    // Note: If only renewalStatus is specified, pagination is already handled by the database query
-    // If both renewalStatus and paymentStatus are specified, renewalStatus is filtered at DB level,
-    // then paymentStatus is filtered in JS, then pagination is applied
 
     // Return paginated response
     const currentPage = parseInt(page);
@@ -546,6 +665,7 @@ exports.getCustomerById = async (req, res) => {
           model: CustomerHardware,
           attributes: [
             "id",
+            "inventoryId",
             "deviceType",
             "macAddress",
             "ipAddress",
@@ -600,6 +720,7 @@ exports.getCustomerById = async (req, res) => {
           }
         : null,
       hardware: customer.CustomerHardwares?.[0] || null,
+      hardwares: customer.CustomerHardwares || [],
       subscriptions: customer.Subscriptions
         ? customer.Subscriptions.map((sub) => ({
             ...sub.toJSON(),
@@ -749,6 +870,7 @@ exports.updateCustomer = async (req, res) => {
           model: CustomerHardware,
           attributes: [
             "id",
+            "inventoryId",
             "deviceType",
             "macAddress",
             "ipAddress",
@@ -788,7 +910,11 @@ exports.updateCustomer = async (req, res) => {
 // Delete Customer
 exports.deleteCustomer = async (req, res) => {
   try {
-    const deleted = await Customer.destroy({ where: { id: req.params.id } });
+    const where = { id: req.params.id };
+    if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
+      where.companyId = req.userCompanyId;
+    }
+    const deleted = await Customer.destroy({ where });
     if (!deleted) return res.status(404).json({ error: "Customer not found" });
     res.json({ message: "Customer deleted" });
   } catch (err) {
@@ -1147,14 +1273,16 @@ exports.deleteTransaction = async (req, res) => {
   const dbTransaction = await sequelize.transaction();
   try {
     const { transactionId } = req.params;
-    const { companyId } = req.user;
+    const where = {
+      id: transactionId,
+      isActive: true,
+    };
+    if (req.userRoleCode !== "SUPER_ADMIN" && req.userCompanyId) {
+      where.companyId = req.userCompanyId;
+    }
 
     const transaction = await Transaction.findOne({
-      where: {
-        id: transactionId,
-        companyId,
-        isActive: true,
-      },
+      where,
       transaction: dbTransaction,
     });
 
@@ -1167,11 +1295,10 @@ exports.deleteTransaction = async (req, res) => {
     }
 
     // Verify this is the latest transaction (most recent by date and id)
-    // Get the latest transaction ID directly
     const latestTransaction = await Transaction.findOne({
       where: {
         customerId: transaction.customerId,
-        companyId,
+        companyId: transaction.companyId,
         isActive: true,
       },
       attributes: ["id"],
@@ -1182,7 +1309,6 @@ exports.deleteTransaction = async (req, res) => {
       transaction: dbTransaction,
     });
 
-    // Compare IDs as integers to avoid type mismatch issues
     const requestedId = parseInt(transactionId, 10);
     const latestId = latestTransaction
       ? parseInt(latestTransaction.id, 10)
@@ -1196,11 +1322,36 @@ exports.deleteTransaction = async (req, res) => {
       });
     }
 
-    // Soft delete transaction (no recalculation needed since it's the latest)
+    // Soft delete transaction
     await transaction.update(
       { isActive: false },
       { transaction: dbTransaction }
     );
+
+    // Also soft-delete associated payment or invoice if linked
+    if (transaction.referenceType === "payment" && transaction.referenceId) {
+      await Payment.update(
+        { isActive: false },
+        { where: { id: transaction.referenceId }, transaction: dbTransaction }
+      );
+    } else if (transaction.type === "PAYMENT") {
+      await Payment.update(
+        { isActive: false },
+        { where: { transactionId: transaction.id }, transaction: dbTransaction }
+      );
+    }
+
+    if (transaction.referenceType === "invoice" && transaction.referenceId) {
+      await Invoice.update(
+        { isActive: false },
+        { where: { id: transaction.referenceId }, transaction: dbTransaction }
+      );
+    } else if (transaction.type === "INVOICE") {
+      await Invoice.update(
+        { isActive: false },
+        { where: { transactionId: transaction.id }, transaction: dbTransaction }
+      );
+    }
 
     await dbTransaction.commit();
 
@@ -1312,16 +1463,21 @@ exports.generateBill = async (req, res) => {
 
     // Get current balance
     const currentBalance = await getCurrentBalance(customerId, companyId);
-    const newBalance = currentBalance + amountTotal;
+    const periodCharges =
+      Math.round(
+        (parseFloat(subtotal || 0) + parseFloat(additionalAmount || 0)) * 100
+      ) / 100;
+    const newBalance =
+      Math.round((currentBalance + periodCharges) * 100) / 100;
 
-    // Create transaction for invoice
+    // Create transaction for invoice (ledger debits the current period charges, not previous balance again)
     const invoiceTransaction = await Transaction.create(
       {
         companyId,
         customerId,
         type: "INVOICE",
         direction: "DEBIT",
-        amount: amountTotal,
+        amount: periodCharges,
         balanceBefore: currentBalance,
         balanceAfter: newBalance,
         description: `Bill invoice ${periodStart} to ${periodEnd}`,
@@ -1363,6 +1519,9 @@ exports.generateBill = async (req, res) => {
       });
     }
 
+    const calculatedAmountTotal =
+      Math.round((periodCharges + (prevBalance > 0 ? parseFloat(prevBalance) : 0)) * 100) / 100;
+
     // Create invoice document
     const invoice = await Invoice.create(
       {
@@ -1374,10 +1533,10 @@ exports.generateBill = async (req, res) => {
         subscriptionId: null, // Will be updated if subscription exists
         periodStart: periodStart,
         periodEnd: periodEnd,
-        subtotal: subtotal + prevBalance + additionalAmount,
+        subtotal: periodCharges,
         taxAmount: 0,
         discounts: 0,
-        amountTotal: amountTotal,
+        amountTotal: calculatedAmountTotal,
         prevBalance: prevBalance,
         items: invoiceItems,
         dueDate: periodEnd,
@@ -1390,6 +1549,8 @@ exports.generateBill = async (req, res) => {
       { referenceId: invoice.id },
       { transaction: dbTransaction }
     );
+
+    const nextRenewal = calculateNextRenewalDate(periodEnd);
 
     // Create or update subscriptions for the customer
     const createdSubscriptions = [];
@@ -1420,7 +1581,7 @@ exports.generateBill = async (req, res) => {
                 agreedMonthlyPrice: monthlyPrice || plan.monthlyPrice,
                 quantity: quantity || subscription.quantity || 1,
                 lastRenewalDate: periodStart,
-                nextRenewalDate: periodEnd,
+                nextRenewalDate: nextRenewal,
               },
               { transaction: dbTransaction }
             );
@@ -1435,7 +1596,7 @@ exports.generateBill = async (req, res) => {
                 quantity: subData.quantity || 1,
                 startDate: periodStart,
                 lastRenewalDate: periodStart,
-                nextRenewalDate: periodEnd,
+                nextRenewalDate: nextRenewal,
                 agreedMonthlyPrice: monthlyPrice || plan.monthlyPrice,
                 status: "ACTIVE",
               },
@@ -1549,12 +1710,12 @@ exports.getInvoiceDetails = async (req, res) => {
         },
         {
           model: Transaction,
-          include: [
-            {
-              model: Payment,
-              attributes: ["id", "amount", "method", "collectedAt", "comments"],
-            },
-          ],
+          required: false,
+        },
+        {
+          model: Payment,
+          attributes: ["id", "amount", "discount", "method", "collectedAt", "comments"],
+          required: false,
         },
         {
           model: Subscription,
@@ -1571,13 +1732,17 @@ exports.getInvoiceDetails = async (req, res) => {
       });
     }
 
-    // Calculate total paid (sum of all payments)
+    // Calculate total paid (sum of all payments and discounts)
     const totalPaid =
-      invoice.Transaction?.Payments?.reduce(
-        (sum, payment) => sum + (payment.amount || 0),
+      invoice.Payments?.reduce(
+        (sum, payment) =>
+          sum + (parseFloat(payment.amount) || 0) + (parseFloat(payment.discount) || 0),
         0
       ) || 0;
-    const balance = invoice.amountTotal - totalPaid;
+    const balance = Math.max(
+      0,
+      Math.round(((invoice.amountTotal || 0) - totalPaid) * 100) / 100
+    );
 
     res.json({
       success: true,

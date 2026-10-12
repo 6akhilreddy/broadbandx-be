@@ -45,20 +45,19 @@ const getCollectionData = async (req, res) => {
       where: whereClause,
       include: [
         {
-          model: Invoice,
+          model: Customer,
           include: [
             {
-              model: Customer,
-              include: [
-                {
-                  model: Area,
-                  attributes: ["id", "areaName"],
-                },
-              ],
-              attributes: ["id", "fullName", "customerCode", "areaId"],
+              model: Area,
+              attributes: ["id", "areaName"],
             },
           ],
+          attributes: ["id", "fullName", "customerCode", "areaId"],
+        },
+        {
+          model: Invoice,
           attributes: ["id", "subtotal", "discounts", "amountTotal"],
+          required: false,
         },
         {
           model: User,
@@ -73,8 +72,8 @@ const getCollectionData = async (req, res) => {
     const filteredPayments = areaId
       ? payments.filter(
           (payment) =>
-            payment.Invoice.Customer.Area &&
-            payment.Invoice.Customer.Area.id == areaId
+            payment.Customer?.Area &&
+            payment.Customer.Area.id == areaId
         )
       : payments;
 
@@ -93,16 +92,19 @@ const getCollectionData = async (req, res) => {
         };
       }
 
-      const customer = payment.Invoice.Customer;
+      const customer = payment.Customer || {};
       const area = customer.Area;
       const collector = payment.collector;
+      const discount =
+        payment.discount !== undefined && payment.discount !== null
+          ? payment.discount
+          : (payment.Invoice?.discounts || 0);
 
       // Add to totals
       acc[date].totalCustomers++;
       acc[date].totalAmount += payment.amount || 0;
-      acc[date].totalDiscount += payment.Invoice.discounts || 0;
-      acc[date].totalPayment +=
-        (payment.amount || 0) + (payment.Invoice.discounts || 0);
+      acc[date].totalDiscount += discount;
+      acc[date].totalPayment += (payment.amount || 0) + discount;
 
       // Group by payment method
       if (!acc[date].paymentsByMethod[payment.method]) {
@@ -117,20 +119,22 @@ const getCollectionData = async (req, res) => {
 
       acc[date].paymentsByMethod[payment.method].customers++;
       acc[date].paymentsByMethod[payment.method].amount += payment.amount || 0;
-      acc[date].paymentsByMethod[payment.method].discount +=
-        payment.Invoice.discounts || 0;
+      acc[date].paymentsByMethod[payment.method].discount += discount;
       acc[date].paymentsByMethod[payment.method].payment +=
-        (payment.amount || 0) + (payment.Invoice.discounts || 0);
+        (payment.amount || 0) + discount;
 
       // Add customer details with null checks
       acc[date].customers.push({
         id: customer.id,
-        name: customer.fullName,
+        name: customer.fullName || "Unknown",
         area: area ? area.areaName : "Unknown Area",
-        previousBalance: payment.Invoice.subtotal || 0,
+        previousBalance: payment.Invoice?.subtotal || 0,
         paidAmount: payment.amount || 0,
-        discount: payment.Invoice.discounts || 0,
-        currentBalance: (payment.Invoice.subtotal || 0) - (payment.amount || 0),
+        discount: discount,
+        currentBalance: Math.max(
+          0,
+          (payment.Invoice?.subtotal || 0) - (payment.amount || 0) - discount
+        ),
         collectedBy: collector ? collector.name : "Unknown Collector",
         customerCode: customer.customerCode,
         paymentMethod: payment.method,
@@ -184,21 +188,21 @@ const getCollectionSummary = async (req, res) => {
       where: whereClause,
       include: [
         {
-          model: Invoice,
+          model: Customer,
           include: [
             {
-              model: Customer,
-              include: [
-                {
-                  model: Area,
-                  where: areaId ? { id: areaId } : {},
-                  attributes: ["id", "areaName"],
-                },
-              ],
-              attributes: ["id", "fullName", "customerCode", "areaId"],
+              model: Area,
+              where: areaId ? { id: areaId } : {},
+              attributes: ["id", "areaName"],
+              required: areaId ? true : false,
             },
           ],
+          attributes: ["id", "fullName", "customerCode", "areaId"],
+        },
+        {
+          model: Invoice,
           attributes: ["id", "subtotal", "discounts", "amountTotal"],
+          required: false,
         },
       ],
     });
@@ -209,7 +213,11 @@ const getCollectionSummary = async (req, res) => {
       0
     );
     const totalDiscount = payments.reduce(
-      (sum, payment) => sum + (payment.Invoice.discounts || 0),
+      (sum, payment) =>
+        sum +
+        (payment.discount !== undefined && payment.discount !== null
+          ? payment.discount
+          : (payment.Invoice?.discounts || 0)),
       0
     );
 
