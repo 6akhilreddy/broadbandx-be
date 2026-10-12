@@ -14,8 +14,11 @@ if (process.env.ENVIRONMENT === "local") {
     dialect: "postgres", // Explicitly specify the dialect
     logging: false,
   });
-} else if (process.env.ENVIRONMENT === "dev") {
+} else if (process.env.ENVIRONMENT === "dev" || process.env.DB_URL) {
   // Neon DB Connection
+  if (!process.env.DB_URL) {
+    throw new Error("DB_URL environment variable is required for dev environment");
+  }
   sequelize = new Sequelize(process.env.DB_URL, {
     dialect: "postgres",
     dialectOptions: {
@@ -27,20 +30,15 @@ if (process.env.ENVIRONMENT === "local") {
     logging: false,
   });
 } else {
-  // Local Database Connection
-  sequelize = new Sequelize(
-    "postgresql://neondb_owner:npg_rbIMWjP91puk@ep-noisy-water-a1ylr5o3-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
-    {
-      dialect: "postgres",
-      dialectOptions: {
-        ssl: {
-          require: true,
-          rejectUnauthorized: false, // Required for Neon DB
-        },
-      },
-      logging: false,
-    }
-  );
+  // Fallback Local Database Connection
+  sequelize = new Sequelize({
+    database: process.env.DB_NAME || "postgres",
+    username: process.env.DB_USER || "postgres",
+    password: process.env.DB_PASSWORD || undefined,
+    host: process.env.DB_HOST || "127.0.0.1",
+    dialect: "postgres",
+    logging: false,
+  });
 }
 
 module.exports = sequelize;

@@ -6,7 +6,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "seed": "node app/config/seed.js"
+    "seed": "node app/config/seed.js",
+    "seed:dev": "ENVIRONMENT=dev node app/config/seed.js"
   },
   "keywords": [],
   "author": "",
